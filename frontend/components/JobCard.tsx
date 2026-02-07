@@ -35,21 +35,20 @@ export function JobCard({ job, userRole = "viewer" }: JobCardProps) {
 
   return (
     <Link href={`/jobs/${job.id}`}>
-      <div className="card-hover group border-l-2 border-l-transparent hover:border-l-white/50 transition-all">
+      <div className="group p-6 bg-white/[0.02] border border-white/[0.06] rounded-2xl hover:bg-white/[0.04] hover:border-white/[0.1] transition-all duration-300">
         {/* Header */}
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start justify-between mb-5">
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-medium text-white group-hover:text-white transition-colors truncate tracking-wide">
+            <h3 className="text-base font-medium text-white/90 group-hover:text-white transition-colors truncate tracking-wide">
               {job.title || job.clientRepo}
             </h3>
-            <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex items-center gap-3 mt-2">
               {category && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.05] border border-white/[0.08] text-white/50 text-[10px] uppercase tracking-wider">
-                  <span>{category.icon}</span>
+                <span className="text-[10px] text-white/40 uppercase tracking-wider">
                   {category.label}
                 </span>
               )}
-              <span className="text-[10px] text-white/30 font-mono">
+              <span className="text-[10px] text-white/20 font-mono">
                 {truncateJobId(job.id)}
               </span>
             </div>
@@ -61,23 +60,23 @@ export function JobCard({ job, userRole = "viewer" }: JobCardProps) {
         <div className="space-y-4 my-6">
           {/* Payment */}
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-white/[0.05] flex items-center justify-center">
-               <Wallet className="w-4 h-4 text-white/80" />
+            <div className="w-9 h-9 rounded-xl bg-white/[0.04] flex items-center justify-center">
+               <Wallet className="w-4 h-4 text-white/50" />
             </div>
-            <span className="font-semibold text-white/90 text-lg">
+            <span className="font-medium text-white/80 text-lg">
               {formatFLR(job.paymentAmount)}
             </span>
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex gap-5">
             {/* Deliverable destination */}
-            <div className="flex items-center gap-2 text-white/50 text-sm">
+            <div className="flex items-center gap-2 text-white/40 text-sm">
               <Package className="w-3.5 h-3.5" />
-              <span className="truncate max-w-[140px]">{job.clientRepo}</span>
+              <span className="truncate max-w-[120px]">{job.clientRepo}</span>
             </div>
 
             {/* Deadline */}
-            <div className="flex items-center gap-2 text-white/50 text-sm">
+            <div className="flex items-center gap-2 text-white/40 text-sm">
               <Clock className="w-3.5 h-3.5" />
               <span className={isPastDeadline && isOpen ? "text-red-400" : ""}>
                 {timeDisplay}
@@ -87,8 +86,8 @@ export function JobCard({ job, userRole = "viewer" }: JobCardProps) {
         </div>
 
         {/* Footer */}
-        <div className="mt-4 pt-4 border-t border-white/[0.05] flex items-center justify-between">
-          <div className="text-xs text-white/40 font-medium uppercase tracking-wider">
+        <div className="mt-5 pt-5 border-t border-white/[0.04] flex items-center justify-between">
+          <div className="text-[11px] text-white/30 uppercase tracking-wider">
             {job.freelancer !== "0x0000000000000000000000000000000000000000" ? (
               <span>
                 Freelancer:{" "}

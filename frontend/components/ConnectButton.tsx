@@ -47,15 +47,40 @@ export function ConnectButton() {
     if (typeof window === 'undefined' || !window.ethereum) return;
     setAddingChain(true);
     try {
+      // First try to add the chain
       await window.ethereum.request({
         method: 'wallet_addEthereumChain',
         params: [COSTON2_CHAIN],
       });
-    } catch (err) {
-      console.error('Failed to add network:', err);
+    } catch (addError: any) {
+      // Chain might already exist, try to switch
+      if (addError?.code === 4001) {
+        // User rejected
+        console.log('User rejected adding chain');
+      } else {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: COSTON2_CHAIN.chainId }],
+          });
+        } catch (switchError) {
+          console.error('Failed to switch network:', switchError);
+        }
+      }
     }
     setAddingChain(false);
   };
+
+  // Auto-switch to Coston2 on connect if on wrong network
+  useEffect(() => {
+    if (isConnected && isWrongNetwork && window.ethereum) {
+      // Prompt to switch after a short delay
+      const timer = setTimeout(() => {
+        addCoston2Network();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isConnected, isWrongNetwork]);
 
   // Close menus on click outside
   useEffect(() => {
@@ -107,9 +132,26 @@ export function ConnectButton() {
               {chains.map((chain) => (
                 <button
                   key={chain.id}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    switchChain({ chainId: chain.id });
+                    try {
+                      // Try to switch first
+                      switchChain({ chainId: chain.id });
+                    } catch (switchError: any) {
+                      // If switch fails, try adding the chain
+                      if (switchError?.code === 4902 || switchError?.message?.includes('wallet_switchEthereumChain')) {
+                        if (chain.id === 114 && window.ethereum) {
+                          try {
+                            await window.ethereum.request({
+                              method: 'wallet_addEthereumChain',
+                              params: [COSTON2_CHAIN],
+                            });
+                          } catch (addError) {
+                            console.error('Failed to add chain:', addError);
+                          }
+                        }
+                      }
+                    }
                     setShowChainMenu(false);
                   }}
                   className="w-full px-4 py-3 text-left hover:bg-white/[0.05] flex items-center justify-between text-sm"
@@ -234,14 +276,10 @@ export function ConnectButton() {
                 >
                   <div className={`w-10 h-10 rounded-xl border border-white/10 flex items-center justify-center ${
                     isMetaMask 
-                      ? 'bg-gradient-to-br from-orange-500/30 to-orange-600/20' 
-                      : 'bg-gradient-to-br from-blue-500/20 to-purple-500/20'
+                      ? 'bg-gradient-to-br from-orange-500/20 to-amber-500/10' 
+                      : 'bg-gradient-to-br from-blue-500/20 to-indigo-500/10'
                   }`}>
-                    {isMetaMask ? (
-                      <span className="text-xl">🦊</span>
-                    ) : (
-                      <Wallet className="w-5 h-5 text-blue-400" />
-                    )}
+                    <Wallet className={`w-5 h-5 ${isMetaMask ? 'text-orange-400' : 'text-blue-400'}`} />
                   </div>
                   <div>
                     <span className="text-white font-medium block">{displayName}</span>

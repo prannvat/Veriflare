@@ -59,6 +59,7 @@ export interface Job {
   category?: JobCategory;
   title?: string;
   verificationType?: VerificationType;
+  isOnChain?: boolean;  // true if created via real on-chain tx
 }
 
 export interface BuildSubmission {
@@ -80,12 +81,19 @@ interface AppState {
   addJob: (job: Job) => void;
   updateJob: (id: string, updates: Partial<Job>) => void;
   getJob: (id: string) => Job | undefined;
+  
+  // Create a new job (for client flow)
+  createJob: (title: string, category: JobCategory, verificationType: VerificationType, destination: string, ref: string, paymentAmount: bigint, deadline: number, reviewPeriod: number, clientAddress: string) => string;
 
   // Demo mode actions
   acceptJob: (jobId: string, freelancerAddress: string) => void;
   submitDeliverable: (jobId: string, deliveryUrl: string, deliveryHash: string) => void;
   approveWork: (jobId: string) => void;
   completePayment: (jobId: string) => void;
+  
+  // Get jobs by role
+  getClientJobs: (clientAddress: string) => Job[];
+  getFreelancerJobs: (freelancerAddress: string) => Job[];
 
   // Initialize demo jobs
   initDemoJobs: () => void;
@@ -131,18 +139,49 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { jobs };
     }),
   getJob: (id) => get().jobs.get(id),
+  
+  // Create a new job
+  createJob: (title, category, verificationType, destination, ref, paymentAmount, deadline, reviewPeriod, clientAddress) => {
+    const jobId = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+    const newJob: Job = {
+      id: jobId,
+      client: clientAddress,
+      freelancer: "0x0000000000000000000000000000000000000000",
+      freelancerGitHub: "",
+      paymentAmount,
+      paymentToken: "0x0000000000000000000000000000000000000000",
+      clientRepo: destination,
+      targetBranch: ref,
+      requirementsHash: "0x...",
+      acceptedBuildHash: "",
+      acceptedSourceHash: "",
+      deadline,
+      reviewPeriod,
+      codeDeliveryDeadline: 0,
+      status: 0, // Open
+      category,
+      title,
+      verificationType,
+    };
+    set((state) => {
+      const jobs = new Map(state.jobs);
+      jobs.set(jobId, newJob);
+      return { jobs };
+    });
+    return jobId;
+  },
 
-  // Demo mode actions
+  // Demo mode actions (status values match FreelancerEscrow.sol enum)
   acceptJob: (jobId, freelancerAddress) =>
     set((state) => {
       const jobs = new Map(state.jobs);
       const job = jobs.get(jobId);
-      if (job && job.status === 0) {
+      if (job && job.status === 0) { // Open → InProgress
         jobs.set(jobId, {
           ...job,
           freelancer: freelancerAddress,
           freelancerGitHub: "demo-freelancer",
-          status: 2, // In Progress
+          status: 1, // InProgress
         });
       }
       return { jobs };
@@ -152,12 +191,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const jobs = new Map(state.jobs);
       const job = jobs.get(jobId);
-      if (job && (job.status === 1 || job.status === 2)) {
+      if (job && job.status === 1) { // InProgress → BuildSubmitted
         jobs.set(jobId, {
           ...job,
           clientRepo: deliveryUrl,
           acceptedBuildHash: deliveryHash,
-          status: 3, // Submitted for Review
+          status: 2, // BuildSubmitted
         });
       }
       return { jobs };
@@ -167,10 +206,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const jobs = new Map(state.jobs);
       const job = jobs.get(jobId);
-      if (job && job.status === 3) {
+      if (job && job.status === 2) { // BuildSubmitted → BuildAccepted
         jobs.set(jobId, {
           ...job,
-          status: 4, // Approved
+          status: 3, // BuildAccepted
         });
       }
       return { jobs };
@@ -180,7 +219,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const jobs = new Map(state.jobs);
       const job = jobs.get(jobId);
-      if (job && job.status === 4) {
+      if (job && job.status === 3) { // BuildAccepted → Completed
         jobs.set(jobId, {
           ...job,
           status: 5, // Completed
@@ -188,6 +227,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { jobs };
     }),
+    
+  // Get jobs by role
+  getClientJobs: (clientAddress) => {
+    const allJobs = Array.from(get().jobs.values());
+    return allJobs.filter(job => job.client.toLowerCase() === clientAddress.toLowerCase());
+  },
+  
+  getFreelancerJobs: (freelancerAddress) => {
+    const allJobs = Array.from(get().jobs.values());
+    return allJobs.filter(job => 
+      job.freelancer !== "0x0000000000000000000000000000000000000000" &&
+      job.freelancer.toLowerCase() === freelancerAddress.toLowerCase()
+    );
+  },
 
   initDemoJobs: () =>
     set(() => {

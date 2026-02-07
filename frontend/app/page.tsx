@@ -27,16 +27,11 @@ export default function Home() {
   return (
     <div className="relative">
       {/* Hero Section */}
-      <section className="relative py-20 lg:py-32">
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="relative py-24 lg:py-32">
+        <div className="relative max-w-5xl mx-auto px-6 sm:px-8 lg:px-12">
           <div className="text-center">
-            <div className="flex justify-center gap-3 mb-8">
+            <div className="flex justify-center mb-10">
               <LiveBadge />
-            </div>
-            <div className="flex justify-center gap-3 mb-4">
-              {["💻", "🎨", "🎵", "📸", "🎬", "✍️"].map((emoji, i) => (
-                <span key={i} className="text-2xl opacity-40">{emoji}</span>
-              ))}
             </div>
             <h1 className="text-4xl sm:text-5xl lg:text-7xl font-bold mb-6 tracking-tight">
               <span className="text-white">Freelance with</span>
@@ -67,37 +62,37 @@ export default function Home() {
       </section>
 
       {/* Contract Status Section */}
-      <section className="py-8 border-t border-white/[0.05]">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="py-16 border-t border-white/[0.04]">
+        <div className="max-w-2xl mx-auto px-6 sm:px-8 lg:px-12">
           <ContractStatus />
         </div>
       </section>
 
       {/* Problem/Solution Section */}
-      <section className="py-20 border-t border-white/[0.05]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-2 gap-12">
+      <section className="py-24 border-t border-white/[0.04]">
+        <div className="max-w-5xl mx-auto px-6 sm:px-8 lg:px-12">
+          <div className="grid md:grid-cols-2 gap-10">
             {/* Problem */}
-            <div className="card border-white/[0.05]">
-              <h3 className="text-xl font-medium text-white/40 mb-6 uppercase tracking-wider">
+            <div className="p-10 bg-white/[0.01] border border-white/[0.04] rounded-2xl">
+              <h3 className="text-[11px] font-medium text-white/30 mb-10 uppercase tracking-widest">
                 The Problem
               </h3>
-              <div className="space-y-6 text-white/60">
-                <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 rounded-full bg-white/[0.03] border border-white/[0.05] flex items-center justify-center flex-shrink-0">
-                    <span className="text-white/40 text-sm">?</span>
+              <div className="space-y-8 text-white/50">
+                <div className="flex items-start gap-5">
+                  <div className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+                    <span className="text-white/30 text-sm">?</span>
                   </div>
-                  <p className="font-light">
-                    <strong className="text-white font-medium block mb-1">Client Hesitation</strong>
+                  <p className="font-light leading-relaxed">
+                    <strong className="text-white/80 font-medium block mb-1.5">Client Hesitation</strong>
                     "What if the deliverable doesn't meet my standards after I pay?"
                   </p>
                 </div>
-                <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 rounded-full bg-white/[0.03] border border-white/[0.05] flex items-center justify-center flex-shrink-0">
-                    <span className="text-white/40 text-sm">?</span>
+                <div className="flex items-start gap-5">
+                  <div className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+                    <span className="text-white/30 text-sm">?</span>
                   </div>
-                  <p className="font-light">
-                    <strong className="text-white font-medium block mb-1">Freelancer Risk</strong>
+                  <p className="font-light leading-relaxed">
+                    <strong className="text-white/80 font-medium block mb-1.5">Freelancer Risk</strong>
                     "What if they disappear after I hand over my work?"
                   </p>
                 </div>
@@ -134,12 +129,12 @@ export default function Home() {
 
       {/* How It Works */}
       <section className="py-24 border-t border-white/[0.05]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-5xl mx-auto px-6 sm:px-8 lg:px-12">
           <h2 className="text-2xl font-light text-center text-white mb-16 tracking-wide">
             HOW IT WORKS
           </h2>
 
-          <div className="grid md:grid-cols-4 gap-6">
+          <div className="grid md:grid-cols-4 gap-8">
             {[
               {
                 icon: Lock,
@@ -178,7 +173,7 @@ export default function Home() {
 
       {/* Features */}
       <section className="py-24 border-t border-white/[0.05]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-5xl mx-auto px-6 sm:px-8 lg:px-12">
           <div className="grid md:grid-cols-3 gap-8">
             <div className="card border-none bg-transparent pl-0">
               <Shield className="w-8 h-8 text-white/80 mb-6" />
@@ -230,6 +225,108 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FDC Deep Dive Section */}
+      <section className="py-24 border-t border-white/[0.05]">
+        <div className="max-w-5xl mx-auto px-6 sm:px-8 lg:px-12">
+          <div className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm mb-6">
+              <Zap className="w-4 h-4" />
+              Powered by Real FDC Protocol
+            </div>
+            <h2 className="text-3xl font-light text-white mb-4 tracking-wide">
+              How Flare Data Connector Works
+            </h2>
+            <p className="text-white/50 max-w-2xl mx-auto">
+              FDC brings trustless Web2 data verification to smart contracts. Here's the actual 
+              5-step attestation process used in Veriflare.
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-5 gap-4">
+            {[
+              {
+                step: 1,
+                title: "Prepare Request",
+                tech: "POST to FDC Verifier",
+                description: "Build Web2Json attestation request with target URL, JQ filter, and ABI signature",
+                color: "amber",
+              },
+              {
+                step: 2,
+                title: "Submit On-Chain",
+                tech: "FdcHub.requestAttestation()",
+                description: "Submit the encoded request to Flare's FdcHub contract with required fee",
+                color: "orange",
+              },
+              {
+                step: 3,
+                title: "Consensus Voting",
+                tech: "90-second voting rounds",
+                description: "Independent attestation providers verify the data and vote on correctness",
+                color: "rose",
+              },
+              {
+                step: 4,
+                title: "Merkle Proof",
+                tech: "DA Layer API",
+                description: "Fetch cryptographic proof from the Data Availability Layer once round finalizes",
+                color: "pink",
+              },
+              {
+                step: 5,
+                title: "Verify & Execute",
+                tech: "On-chain verification",
+                description: "Smart contract verifies the Merkle proof and executes payment release",
+                color: "purple",
+              },
+            ].map((item) => (
+              <div key={item.step} className="relative p-5 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:border-white/[0.12] transition-colors group">
+                <div className={`absolute -top-3 left-5 px-2 py-0.5 text-xs font-medium rounded bg-${item.color}-500/20 text-${item.color}-400 border border-${item.color}-500/30`}>
+                  Step {item.step}
+                </div>
+                <h4 className="text-white font-medium mt-2 mb-1">{item.title}</h4>
+                <p className="text-white/30 text-xs font-mono mb-3">{item.tech}</p>
+                <p className="text-white/50 text-sm leading-relaxed">{item.description}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* FDC Links */}
+          <div className="mt-12 flex flex-wrap justify-center gap-4">
+            <a
+              href="https://dev.flare.network/fdc/overview"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] text-white/60 hover:text-white hover:border-white/20 transition-all text-sm"
+            >
+              <FileCheck className="w-4 h-4" />
+              FDC Documentation
+              <ArrowRight className="w-3 h-3" />
+            </a>
+            <a
+              href="https://dev.flare.network/fdc/guides/hardhat/web2-json"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] text-white/60 hover:text-white hover:border-white/20 transition-all text-sm"
+            >
+              <Code className="w-4 h-4" />
+              Web2Json Guide
+              <ArrowRight className="w-3 h-3" />
+            </a>
+            <a
+              href="https://coston2-explorer.flare.network/address/0x3DF72131555649Cdb40c743605c622A50409e0fb"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] text-white/60 hover:text-white hover:border-white/20 transition-all text-sm"
+            >
+              <Shield className="w-4 h-4" />
+              Our Contract
+              <ArrowRight className="w-3 h-3" />
+            </a>
           </div>
         </div>
       </section>
@@ -308,7 +405,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-12 border-t border-white/[0.05]">
-        <div className="max-w-7xl mx-auto px-4 text-center text-white/20 text-xs font-light tracking-widest uppercase">
+        <div className="max-w-5xl mx-auto px-6 sm:px-8 lg:px-12 text-center text-white/20 text-xs font-light tracking-widest uppercase">
           <p>Built for Flare Hackathon 2026 • FDC Powered</p>
         </div>
       </footer>

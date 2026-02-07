@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther } from "viem";
+import { parseEther, decodeEventLog } from "viem";
+import { useRouter } from "next/navigation";
 import { FREELANCER_ESCROW_ABI } from "@/lib/contracts";
-import { CONTRACT_ADDRESSES } from "@/lib/wagmi";
+import { ESCROW_ADDRESS, EXPLORER_URL } from "@/lib/constants";
 import { hashRequirements, daysToSeconds } from "@/lib/utils";
-import { JOB_CATEGORIES, VERIFICATION_TYPES, JobCategory, VerificationType } from "@/lib/store";
-import { X, Loader2, Check } from "lucide-react";
+import { JOB_CATEGORIES, VERIFICATION_TYPES, JobCategory, VerificationType, useAppStore } from "@/lib/store";
+import { X, Loader2, Check, Zap, ExternalLink, Shield } from "lucide-react";
 
 interface CreateJobModalProps {
   isOpen: boolean;
@@ -15,7 +16,10 @@ interface CreateJobModalProps {
 }
 
 export function CreateJobModal({ isOpen, onClose }: CreateJobModalProps) {
-  const { chain } = useAccount();
+  const { chain, address } = useAccount();
+  const router = useRouter();
+  const { createJob, addJob, initDemoJobs, jobs } = useAppStore();
+  
   const [formData, setFormData] = useState({
     title: "",
     category: "development" as JobCategory,
@@ -28,15 +32,75 @@ export function CreateJobModal({ isOpen, onClose }: CreateJobModalProps) {
     reviewPeriodDays: "3",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [demoMode, setDemoMode] = useState(true); // Demo mode by default
+  const [isCreating, setIsCreating] = useState(false);
+  const [createdJobId, setCreatedJobId] = useState<string | null>(null);
 
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, data: receipt } = useWaitForTransactionReceipt({
     hash,
   });
 
-  const contractAddress = chain?.id
-    ? CONTRACT_ADDRESSES[chain.id as keyof typeof CONTRACT_ADDRESSES]?.escrow
-    : undefined;
+  // Extract jobId from tx receipt logs when real tx confirms
+  useEffect(() => {
+    if (isSuccess && receipt && !demoMode) {
+      try {
+        let found = false;
+        // Find the JobCreated event in logs
+        for (const log of receipt.logs) {
+          try {
+            const decoded = decodeEventLog({
+              abi: FREELANCER_ESCROW_ABI,
+              data: log.data,
+              topics: log.topics,
+            });
+            if (decoded.eventName === "JobCreated") {
+              const onChainJobId = (decoded.args as any).jobId as string;
+              setCreatedJobId(onChainJobId);
+              
+              // Store job with the on-chain bytes32 jobId as the key
+              // so the job detail page can find it at /jobs/{onChainJobId}
+              const deadline = Math.floor(Date.now() / 1000) + daysToSeconds(parseInt(formData.deadlineDays));
+              const reviewPeriod = daysToSeconds(parseInt(formData.reviewPeriodDays));
+              addJob({
+                id: onChainJobId,
+                client: address || "0x0000000000000000000000000000000000000000",
+                freelancer: "0x0000000000000000000000000000000000000000",
+                freelancerGitHub: "",
+                paymentAmount: parseEther(formData.paymentAmount),
+                paymentToken: "0x0000000000000000000000000000000000000000",
+                clientRepo: formData.deliverableDestination,
+                targetBranch: formData.deliverableRef,
+                requirementsHash: "0x...",
+                acceptedBuildHash: "",
+                acceptedSourceHash: "",
+                deadline,
+                reviewPeriod,
+                codeDeliveryDeadline: 0,
+                status: 0,
+                category: formData.category,
+                title: formData.title,
+                verificationType: formData.verificationType,
+                isOnChain: true,
+              });
+              found = true;
+              break;
+            }
+          } catch {
+            // Not the right event log, skip
+          }
+        }
+        
+        // Even if we can't parse the event, mark as created with tx hash
+        if (!found) {
+          setCreatedJobId(hash || "created");
+        }
+      } catch (e) {
+        console.error("Error parsing receipt:", e);
+        setCreatedJobId(hash || "created");
+      }
+    }
+  }, [isSuccess, receipt]);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -63,28 +127,63 @@ export function CreateJobModal({ isOpen, onClose }: CreateJobModalProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate() || !contractAddress) return;
+    if (!validate()) return;
 
-    try {
-      const requirementsHash = await hashRequirements(formData.requirements);
-      const deadline = Math.floor(Date.now() / 1000) + daysToSeconds(parseInt(formData.deadlineDays));
-      const reviewPeriod = daysToSeconds(parseInt(formData.reviewPeriodDays));
+    // Initialize demo jobs if empty
+    if (jobs.size === 0) {
+      initDemoJobs();
+    }
 
-      writeContract({
-        address: contractAddress as `0x${string}`,
-        abi: FREELANCER_ESCROW_ABI,
-        functionName: "createJob",
-        args: [
+    if (demoMode) {
+      // Demo mode: add to local store
+      setIsCreating(true);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 800)); // Simulate delay
+        
+        const deadline = Math.floor(Date.now() / 1000) + daysToSeconds(parseInt(formData.deadlineDays));
+        const reviewPeriod = daysToSeconds(parseInt(formData.reviewPeriodDays));
+        
+        const jobId = createJob(
+          formData.title,
+          formData.category,
+          formData.verificationType,
           formData.deliverableDestination,
           formData.deliverableRef,
-          requirementsHash as `0x${string}`,
-          BigInt(deadline),
-          BigInt(reviewPeriod),
-        ],
-        value: parseEther(formData.paymentAmount),
-      });
-    } catch (error) {
-      console.error("Failed to create job:", error);
+          parseEther(formData.paymentAmount),
+          deadline,
+          reviewPeriod,
+          address || "0x0000000000000000000000000000000000000000"
+        );
+        
+        setCreatedJobId(jobId);
+      } catch (error) {
+        console.error("Failed to create job:", error);
+      } finally {
+        setIsCreating(false);
+      }
+    } else {
+      // Real mode: call contract
+      try {
+        const requirementsHash = await hashRequirements(formData.requirements);
+        const deadline = Math.floor(Date.now() / 1000) + daysToSeconds(parseInt(formData.deadlineDays));
+        const reviewPeriod = daysToSeconds(parseInt(formData.reviewPeriodDays));
+
+        writeContract({
+          address: ESCROW_ADDRESS,
+          abi: FREELANCER_ESCROW_ABI,
+          functionName: "createJob",
+          args: [
+            formData.deliverableDestination,
+            formData.deliverableRef,
+            requirementsHash as `0x${string}`,
+            BigInt(deadline),
+            BigInt(reviewPeriod),
+          ],
+          value: parseEther(formData.paymentAmount),
+        });
+      } catch (error) {
+        console.error("Failed to create job:", error);
+      }
     }
   };
 
@@ -111,21 +210,74 @@ export function CreateJobModal({ isOpen, onClose }: CreateJobModalProps) {
           </button>
         </div>
 
-        {isSuccess ? (
+        {isSuccess || createdJobId ? (
           <div className="text-center py-8">
             <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
               <Check className="w-8 h-8 text-white/80" />
             </div>
             <h3 className="text-xl font-medium text-white mb-2">Job Created</h3>
-            <p className="text-white/50 mb-8 font-light">
+            <p className="text-white/50 mb-4 font-light">
               Your job has been created and is now visible to freelancers.
             </p>
-            <button onClick={onClose} className="btn-primary w-full">
-              Close
-            </button>
+            {hash && (
+              <a
+                href={`${EXPLORER_URL}/tx/${hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-green-400 hover:text-green-300 text-sm mb-6 transition-colors"
+              >
+                <Shield className="w-4 h-4" />
+                View transaction on Explorer
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            <div className="flex gap-3">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Close
+              </button>
+              <button 
+                onClick={() => {
+                  onClose();
+                  if (createdJobId) {
+                    router.push(`/jobs/${createdJobId}`);
+                  }
+                }} 
+                className="btn-primary flex-1"
+              >
+                View Job
+              </button>
+            </div>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Demo Mode Toggle */}
+            <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span className="text-amber-400 text-sm font-medium">Demo Mode</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDemoMode(!demoMode)}
+                  className={`relative w-12 h-6 rounded-full transition-colors ${
+                    demoMode ? 'bg-amber-500' : 'bg-white/20'
+                  }`}
+                >
+                  <span 
+                    className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                      demoMode ? 'left-7' : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-white/40 text-xs mt-2">
+                {demoMode 
+                  ? "Job will be created locally for testing. No real transaction needed."
+                  : "Job will be created on-chain. Requires FLR for escrow deposit."}
+              </p>
+            </div>
+
             {/* Title */}
             <div>
               <label className="label">Job Title *</label>
@@ -302,22 +454,24 @@ export function CreateJobModal({ isOpen, onClose }: CreateJobModalProps) {
             {/* Submit */}
             <button
               type="submit"
-              disabled={isPending || isConfirming || !contractAddress}
+              disabled={isPending || isConfirming || isCreating}
               className="btn-primary w-full flex items-center justify-center gap-2 mt-8"
             >
-              {isPending || isConfirming ? (
+              {isPending || isConfirming || isCreating ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  {isPending ? "Confirm in wallet..." : "Creating..."}
+                  {isCreating ? "Creating..." : isPending ? "Confirm in wallet..." : "Creating..."}
                 </>
+              ) : demoMode ? (
+                "Create Job (Demo)"
               ) : (
                 "Create Job & Deposit"
               )}
             </button>
 
-            {!contractAddress && (
-              <p className="text-red-400 text-xs text-center">
-                Please connect to Flare network
+            {!demoMode && (
+              <p className="text-white/40 text-xs text-center">
+                This will send a real transaction on Coston2 testnet
               </p>
             )}
           </form>

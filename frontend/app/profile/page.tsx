@@ -1,80 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, useWriteContract, useReadContract, useWaitForTransactionReceipt } from "wagmi";
-import { Github, Link as LinkIcon, CheckCircle, Loader2, AlertCircle, Globe, Palette, Music, Camera } from "lucide-react";
-import { FREELANCER_ESCROW_ABI } from "@/lib/contracts";
-import { CONTRACT_ADDRESSES } from "@/lib/wagmi";
+import { useAccount } from "wagmi";
+import { AlertCircle, Globe, Palette, Music, Camera, Github } from "lucide-react";
+import { LinkGitHub } from "@/components";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002/api";
+const LinkIcon = Globe; // re-use as link icon
 
 export default function ProfilePage() {
   const { address, chain, isConnected } = useAccount();
-  const [gitHubUsername, setGitHubUsername] = useState("");
-  const [gistId, setGistId] = useState("");
-  const [verificationStep, setVerificationStep] = useState<"input" | "attesting" | "verify" | "complete">("input");
-  const [attestError, setAttestError] = useState<string | null>(null);
-
-  const contractAddress = chain?.id
-    ? CONTRACT_ADDRESSES[chain.id as keyof typeof CONTRACT_ADDRESSES]?.escrow
-    : undefined;
-
-  // Check if GitHub is already linked
-  const { data: linkedGitHub } = useReadContract({
-    address: contractAddress as `0x${string}`,
-    abi: FREELANCER_ESCROW_ABI,
-    functionName: "getWalletGitHub",
-    args: address ? [address] : undefined,
-  });
-
-  const { data: isLinked } = useReadContract({
-    address: contractAddress as `0x${string}`,
-    abi: FREELANCER_ESCROW_ABI,
-    functionName: "isGitHubLinked",
-    args: address ? [address] : undefined,
-  });
-
-  const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
-
-  const signatureMessage = address
-    ? `Veriflare Identity Verification\n\nWallet: ${address}\nTimestamp: ${Math.floor(Date.now() / 1000)}`
-    : "";
-
-  const handleLinkGitHub = async () => {
-    if (!contractAddress || !gitHubUsername || !gistId) return;
-
-    setAttestError(null);
-    setVerificationStep("attesting");
-
-    try {
-      // Call backend to run the full FDC attestation pipeline for the gist
-      const resp = await fetch(`${API_BASE}/fdc/attest-gist`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gistId }),
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.error || "Attestation failed");
-      }
-
-      const { proof } = await resp.json();
-
-      // Submit the FDC proof to the smart contract
-      setVerificationStep("verify");
-      writeContract({
-        address: contractAddress as `0x${string}`,
-        abi: FREELANCER_ESCROW_ABI,
-        functionName: "linkGitHub",
-        args: [gitHubUsername, proof],
-      });
-    } catch (err: any) {
-      setAttestError(err.message || "FDC attestation failed");
-      setVerificationStep("input");
-    }
-  };
 
   if (!isConnected) {
     return (
@@ -91,12 +25,12 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-12">
-      <h1 className="text-2xl font-light text-white mb-10 tracking-tight">Identity & Credentials</h1>
+    <div className="max-w-2xl mx-auto px-6 sm:px-8 lg:px-12 py-20">
+      <h1 className="text-3xl font-light text-white mb-12 tracking-tight">Identity & Credentials</h1>
 
       {/* Wallet Info */}
-      <div className="card mb-8">
-        <h2 className="text-sm font-medium text-white/50 uppercase tracking-widest mb-6">Connected Wallet</h2>
+      <div className="p-8 bg-white/[0.02] border border-white/[0.06] rounded-2xl mb-8">
+        <h2 className="text-[11px] font-medium text-white/40 uppercase tracking-widest mb-8">Connected Wallet</h2>
         <div className="flex items-center gap-5 p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl">
           <div className="w-12 h-12 rounded-full bg-white/[0.03] border border-white/10 flex items-center justify-center shrink-0">
             <span className="text-white/80 font-medium text-lg font-mono">
@@ -113,205 +47,9 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* GitHub Identity */}
-      <div className="card mb-8">
-        <div className="flex items-center gap-3 mb-8">
-          <Github className="w-5 h-5 text-white/80" />
-          <h2 className="text-sm font-medium text-white/50 uppercase tracking-widest">GitHub Verification</h2>
-        </div>
-
-        {isLinked && linkedGitHub ? (
-          // Already linked
-          <div className="text-center py-12 bg-white/[0.02] border border-white/[0.05] rounded-xl relative overflow-hidden">
-             <div className="absolute top-0 right-0 p-3">
-                 <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-medium">
-                     <CheckCircle className="w-3 h-3" />
-                     Verified
-                 </div>
-             </div>
-            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-white/[0.05] border border-white/10 flex items-center justify-center">
-              <Github className="w-8 h-8 text-white/80" />
-            </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              Identity Verified
-            </h3>
-            <p className="text-white/50 mb-6 text-sm">
-              Linked to <span className="text-white font-medium">@{linkedGitHub as string}</span>
-            </p>
-            <a
-              href={`https://github.com/${linkedGitHub}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-white/[0.05] hover:bg-white/10 rounded-lg text-white/80 hover:text-white transition-colors text-sm"
-            >
-              <Github className="w-4 h-4" />
-              View GitHub Profile
-            </a>
-          </div>
-        ) : isSuccess ? (
-          // Just linked
-          <div className="text-center py-12 bg-green-500/[0.02] border border-green-500/10 rounded-xl">
-             <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-green-500/10 flex items-center justify-center">
-              <CheckCircle className="w-8 h-8 text-green-400" />
-            </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              Verification Successful
-            </h3>
-            <p className="text-white/60 text-sm">
-              Your wallet is now linked to <span className="text-white font-medium">@{gitHubUsername}</span>
-            </p>
-          </div>
-        ) : (
-          // Not linked yet
-          <div className="space-y-8">
-            <div className="p-5 bg-blue-500/[0.03] border border-blue-500/10 rounded-xl">
-              <div className="flex gap-4">
-                  <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-start justify-center pt-1.5 shrink-0">
-                      <span className="text-blue-400 font-serif italic font-bold">i</span>
-                  </div>
-                  <div>
-                    <h4 className="text-white/90 font-medium mb-2 text-sm">
-                        Why verify your GitHub?
-                    </h4>
-                    <ul className="space-y-2">
-                        <li className="text-white/60 text-xs flex items-center gap-2">
-                            <span className="w-1 h-1 rounded-full bg-white/30"></span>
-                            Accept freelance jobs that require code verification
-                        </li>
-                        <li className="text-white/60 text-xs flex items-center gap-2">
-                            <span className="w-1 h-1 rounded-full bg-white/30"></span>
-                            Verify commits and deliverables on-chain via FDC
-                        </li>
-                        <li className="text-white/60 text-xs flex items-center gap-2">
-                            <span className="w-1 h-1 rounded-full bg-white/30"></span>
-                            Build reputation tied to your identity
-                        </li>
-                    </ul>
-                  </div>
-              </div>
-            </div>
-
-            {verificationStep === "input" && (
-              <div className="space-y-6">
-                <div>
-                  <label className="label">GitHub Username</label>
-                  <div className="relative">
-                    <Github className="absolute left-4 top-3.5 w-4 h-4 text-white/30" />
-                    <input
-                        type="text"
-                        placeholder="username"
-                        className="input pl-10"
-                        value={gitHubUsername}
-                        onChange={(e) => setGitHubUsername(e.target.value)}
-                    />
-                  </div>
-                </div>
-                {attestError && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
-                    {attestError}
-                  </div>
-                )}
-                <button
-                  onClick={() => setVerificationStep("verify")}
-                  disabled={!gitHubUsername}
-                  className="btn-primary w-full h-11"
-                >
-                  Start Verification
-                </button>
-              </div>
-            )}
-
-            {verificationStep === "verify" && (
-              <div className="space-y-6">
-                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl relative">
-                  <span className="absolute -top-3 left-4 bg-[#0a0a0a] px-2 text-xs text-white/40 uppercase tracking-widest border border-white/10 rounded">Step 1</span>  
-                  <h4 className="text-white font-medium mb-3 mt-1">Proof of Ownership</h4>
-                  <p className="text-white/50 text-xs mb-4 leading-relaxed">
-                    Create a <span className="text-white/80">public gist</span> on GitHub with the following content. This cryptographically links your wallet address to your GitHub account.
-                  </p>
-                  <div className="p-4 bg-black/40 border border-white/5 rounded-lg font-mono text-xs text-white/70 break-all leading-relaxed relative group">
-                    {signatureMessage}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <span className="text-[10px] text-white/30 bg-black/60 px-2 py-1 rounded">Copy</span>
-                    </div>
-                  </div>
-                  <a
-                    href="https://gist.github.com/new"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 w-full flex items-center justify-center gap-2 h-9 rounded-lg bg-white/[0.05] hover:bg-white/[0.08] text-white/80 text-xs font-medium transition-colors"
-                  >
-                    <Github className="w-3.5 h-3.5" />
-                    Open GitHub Gist
-                  </a>
-                </div>
-
-                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl relative">
-                   <span className="absolute -top-3 left-4 bg-[#0a0a0a] px-2 text-xs text-white/40 uppercase tracking-widest border border-white/10 rounded">Step 2</span>
-                  <h4 className="text-white font-medium mb-3 mt-1">
-                    Gist ID
-                  </h4>
-                  <p className="text-white/50 text-xs mb-4">
-                    Paste the Gist ID from the URL (e.g. <span className="text-white/70 font-mono">gist.github.com/you/<span className="text-emerald-400/80">abc123</span></span>).
-                  </p>
-                  <input
-                    type="text"
-                    placeholder="Gist ID"
-                    className="input font-mono text-sm"
-                    value={gistId}
-                    onChange={(e) => setGistId(e.target.value)}
-                  />
-                </div>
-
-                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl relative">
-                   <span className="absolute -top-3 left-4 bg-[#0a0a0a] px-2 text-xs text-white/40 uppercase tracking-widest border border-white/10 rounded">Step 3</span>
-                  <h4 className="text-white font-medium mb-3 mt-1">
-                    FDC Verification
-                  </h4>
-                  <p className="text-white/50 text-xs mb-4">
-                    Submit the gist for attestation via the Flare Data Connector. This verifies your gist on-chain using a Web2Json Merkle proof.
-                  </p>
-                  <button
-                    onClick={handleLinkGitHub}
-                    disabled={isPending || isConfirming || !gistId}
-                    className="btn-primary w-full flex items-center justify-center gap-2 h-11"
-                  >
-                    {isPending || isConfirming ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {isPending ? "Check Wallet..." : "Confirming..."}
-                      </>
-                    ) : (
-                      <>
-                        <LinkIcon className="w-4 h-4" />
-                        Verify & Link Identity
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <button
-                  onClick={() => setVerificationStep("input")}
-                  className="w-full text-white/30 hover:text-white/60 text-xs transition-colors py-2"
-                >
-                  Cancel and go back
-                </button>
-              </div>
-            )}
-
-            {verificationStep === "attesting" && (
-              <div className="space-y-6">
-                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl text-center">
-                  <Loader2 className="w-8 h-8 animate-spin text-emerald-400/60 mx-auto mb-4" />
-                  <h4 className="text-white font-medium mb-2">FDC Attestation in Progress</h4>
-                  <p className="text-white/50 text-xs leading-relaxed">
-                    The Flare Data Connector is verifying your gist. This typically takes 1–3 minutes as data providers reach consensus in the current voting round.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+      {/* GitHub Identity — uses shared LinkGitHub component with real FDC */}
+      <div className="mb-8">
+        <LinkGitHub />
       </div>
 
       {/* Portfolio & External Links */}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { Plus, Search, Filter, LayoutGrid, Zap } from "lucide-react";
+import { Plus, Search, Filter, LayoutGrid, Shield } from "lucide-react";
 import Link from "next/link";
 import { JobCard, CreateJobModal } from "@/components";
 import { Job, JOB_CATEGORIES, JobCategory, useAppStore } from "@/lib/store";
@@ -49,28 +49,30 @@ export default function JobsPage() {
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Demo Banner */}
-      <div className="mb-6 p-4 bg-orange-500/10 border border-orange-500/20 rounded-lg flex items-start gap-3">
-        <Zap className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" />
+    <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-12 py-16">
+      {/* Testnet Info Banner */}
+      <div className="mb-10 p-5 bg-white/[0.02] border border-white/[0.08] rounded-2xl flex items-start gap-4">
+        <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+          <Shield className="w-5 h-5 text-green-400" />
+        </div>
         <div>
-          <p className="text-orange-400 font-medium text-sm">Demo Mode Active</p>
-          <p className="text-orange-400/70 text-xs mt-1">
-            This is a proof-of-concept demo. Get testnet C2FLR from the{" "}
-            <a href={FLARE_LINKS.faucet} target="_blank" className="underline hover:text-orange-300">
+          <p className="text-white/80 font-medium text-sm">Coston2 Testnet — Live Smart Contract</p>
+          <p className="text-white/40 text-sm mt-1">
+            All on-chain jobs use real transactions on Flare Coston2. Get testnet FLR from the{" "}
+            <a href={FLARE_LINKS.faucet} target="_blank" className="text-white/60 hover:text-white underline underline-offset-2">
               Coston2 faucet
             </a>
-            {" "}to test real transactions.
+            {" "}to create and accept jobs. Demo jobs are available for exploring the UI.
           </p>
         </div>
       </div>
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6 mb-12">
         <div>
-          <h1 className="text-3xl font-bold text-white">Jobs</h1>
-          <p className="text-white/60 mt-1">
-            Browse freelance opportunities across every discipline
+          <h1 className="text-3xl font-light text-white tracking-tight">Jobs</h1>
+          <p className="text-white/40 mt-2">
+            Browse opportunities across every discipline
           </p>
         </div>
         {isConnected && (
@@ -78,14 +80,14 @@ export default function JobsPage() {
             onClick={() => setIsCreateModalOpen(true)}
             className="btn-primary flex items-center gap-2"
           >
-            <Plus className="w-5 h-5" />
+            <Plus className="w-4 h-4" />
             Create Job
           </button>
         )}
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row gap-4 mb-10">
         {/* Search */}
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
@@ -140,9 +142,11 @@ export default function JobsPage() {
           ))}
         </div>
       ) : (
-        <div className="text-center py-16">
-          <div className="text-white/40 text-6xl mb-4">🔍</div>
-          <h3 className="text-xl font-semibold text-white mb-2">No jobs found</h3>
+        <div className="text-center py-20">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-white/[0.03] border border-white/[0.08] flex items-center justify-center">
+            <Search className="w-7 h-7 text-white/30" />
+          </div>
+          <h3 className="text-xl font-medium text-white mb-2">No jobs found</h3>
           <p className="text-white/60">
             {searchQuery || statusFilter !== "all"
               ? "Try adjusting your filters"

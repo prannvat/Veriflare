@@ -27,6 +27,19 @@ const CONTRACT_REGISTRY_ABI = [
   "function getContractAddressByName(string calldata name) view returns (address)",
 ];
 
+/* ---------- Helpers ---------- */
+
+/** Build a JSON ABI signature string from an array of {name, type} pairs.
+ *  The Flare verifier requires this format, NOT Solidity shorthand. */
+function buildAbiSignature(fields: { name: string; type: string }[]): string {
+  const components = fields.map(f => ({
+    internalType: f.type,
+    name: f.name,
+    type: f.type,
+  }));
+  return JSON.stringify({ components, name: "task", type: "tuple" });
+}
+
 /* ---------- Constants ---------- */
 
 const FLARE_CONTRACT_REGISTRY = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019";
@@ -96,10 +109,10 @@ export class FDCService {
 
     this.verifierUrl = process.env.WEB2JSON_VERIFIER_URL_TESTNET
       || process.env.VERIFIER_URL_TESTNET
-      || "https://fdc-verifier-coston2.flare.network";
-    this.verifierApiKey = process.env.VERIFIER_API_KEY_TESTNET || "";
+      || "https://fdc-verifiers-testnet.flare.network/verifier/web2";
+    this.verifierApiKey = process.env.VERIFIER_API_KEY_TESTNET || "00000000-0000-0000-0000-000000000000";
     this.daLayerUrl = process.env.COSTON2_DA_LAYER_URL
-      || "https://da-layer-coston2.flare.network";
+      || "https://ctn2-data-availability.flare.network";
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -113,22 +126,35 @@ export class FDCService {
     abiEncodedRequest: string;
     attestationId: string;
   }> {
-    const url = `https://api.github.com/repos/${repoFullName}/git/commits/${commitSha}`;
+    // IMPORTANT: Use the "commits" API (not "git/commits") because it returns
+    // top-level .author.login (GitHub username) which is what the contract checks.
+    // The git/commits endpoint only returns .author.name (display name), not login.
+    const url = `https://api.github.com/repos/${repoFullName}/commits/${commitSha}`;
 
-    // JQ filter to extract the fields we care about from the GitHub API response
-    // Output must match our ABI signature
+    // JQ filter to extract the fields we care about from the GitHub API response.
+    // The commits API response has:
+    //   .sha            → commit SHA
+    //   .commit.tree.sha → tree hash
+    //   .author.login   → GitHub username (top-level, NOT .commit.author.name)
+    //   .commit.author.date → ISO 8601 timestamp
     const postProcessJq = [
       `{`,
       `  repoFullName: "${repoFullName}",`,
       `  commitSha: .sha,`,
-      `  treeHash: .tree.sha,`,
-      `  authorLogin: .author.name,`,
-      `  commitTimestamp: (.author.date | fromdateiso8601)`,
+      `  treeHash: .commit.tree.sha,`,
+      `  authorLogin: .author.login,`,
+      `  commitTimestamp: (.commit.author.date | fromdateiso8601)`,
       `}`,
     ].join("");
 
-    // ABI signature matching GitHubCommitAttestation struct
-    const abiSignature = `(string repoFullName, string commitSha, string treeHash, string authorLogin, uint256 commitTimestamp)`;
+    // ABI signature matching GitHubCommitAttestation struct (JSON ABI format)
+    const abiSignature = buildAbiSignature([
+      { name: "repoFullName", type: "string" },
+      { name: "commitSha", type: "string" },
+      { name: "treeHash", type: "string" },
+      { name: "authorLogin", type: "string" },
+      { name: "commitTimestamp", type: "uint256" },
+    ]);
 
     return this._prepareRequest(url, "GET", postProcessJq, abiSignature);
   }
@@ -150,7 +176,10 @@ export class FDCService {
       `}`,
     ].join("");
 
-    const abiSignature = `(string ownerLogin, string content)`;
+    const abiSignature = buildAbiSignature([
+      { name: "ownerLogin", type: "string" },
+      { name: "content", type: "string" },
+    ]);
 
     return this._prepareRequest(url, "GET", postProcessJq, abiSignature);
   }
@@ -170,9 +199,9 @@ export class FDCService {
       requestBody: {
         url,
         httpMethod,
-        headers: "",
-        queryParams: "",
-        body: "",
+        headers: "{}",
+        queryParams: "{}",
+        body: "{}",
         postProcessJq,
         abiSignature,
       },
@@ -227,8 +256,11 @@ export class FDCService {
 
     // Submit with a small fee (the FDC protocol requires a gas-like fee)
     const fee = ethers.parseEther("0.5"); // Coston2 testnet fee
+    console.log(`[FDC] Sending 'requestAttestation' tx...`);
     const tx = await fdcHub.requestAttestation(abiEncodedRequest, { value: fee });
+    console.log(`[FDC] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
+    console.log(`[FDC] Tx mined in block: ${receipt.blockNumber}`);
 
     if (!receipt) {
       throw new Error("Transaction receipt is null");
@@ -297,66 +329,127 @@ export class FDCService {
     votingRound: number,
     attestationId: string,
   ): Promise<Web2JsonProof> {
-    const resp = await fetch(
-      `${this.daLayerUrl}/api/v1/fdc/proof-by-request-round-raw`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          votingRoundId: votingRound,
-          requestBytes: abiEncodedRequest,
-        }),
-      },
-    );
+    // Give the DA Layer more breathing room after finalization
+    await new Promise((r) => setTimeout(r, 30_000));
 
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`DA Layer proof fetch failed (${resp.status}): ${text}`);
+    let proof: any = null;
+    const maxRetries = 30;
+    const retryDelayMs = 10_000;
+
+    // Some DA nodes may expect different encodings of the same bytes.
+    // Try 0x-prefixed hex (original), hex without 0x, and base64.
+    const hex = abiEncodedRequest.startsWith("0x") ? abiEncodedRequest.slice(2) : abiEncodedRequest;
+    const requestVariants = [
+      { label: "hex0x", value: abiEncodedRequest },
+      { label: "hex", value: hex },
+      { label: "base64", value: Buffer.from(hex, "hex").toString("base64") },
+    ];
+
+    // The DA Layer occasionally returns 400/404 until it indexes the request.
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      console.log(`[FDC] Fetching proof (attempt ${attempt + 1}/${maxRetries})...`);
+
+      let success = false;
+      for (const variant of requestVariants) {
+        const resp = await fetch(
+          `${this.daLayerUrl}/api/v1/fdc/proof-by-request-round-raw`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              votingRoundId: votingRound,
+              requestBytes: variant.value,
+            }),
+          },
+        );
+
+        if (!resp.ok) {
+          const text = await resp.text();
+          console.warn(`[FDC] DA Layer response (${resp.status}) using ${variant.label}: ${text}`);
+          continue; // try next variant within same attempt
+        }
+
+        const json = await resp.json() as any;
+
+        // The DA Layer returns: { proof: string[], response_hex: string }
+        // response_hex is the ABI-encoded IWeb2Json.Response struct
+        if (json.response_hex !== undefined) {
+          proof = json;
+          success = true;
+          console.log(`[FDC] Proof ready using variant ${variant.label}.`);
+          break;
+        }
+      }
+
+      if (success && proof) break;
+
+      // If response_hex is not available yet, wait and retry
+      console.log(`Proof not ready yet. Retrying in ${retryDelayMs / 1000}s...`);
+      await new Promise((r) => setTimeout(r, retryDelayMs));
     }
 
-    const json = await resp.json() as any;
-
-    if (!json.data) {
-      throw new Error("DA Layer returned no proof data");
+    if (!proof || proof.response_hex === undefined) {
+      throw new Error("DA Layer returned no proof data after all retries");
     }
 
-    // Decode the raw proof response into our Web2JsonProof structure
-    const proof = this._decodeDALayerResponse(json.data);
+    // Decode the ABI-encoded response_hex to get the IWeb2Json.Response struct
+    const decodedProof = this._decodeResponseHex(proof.proof, proof.response_hex);
 
     const status = this.attestations.get(attestationId);
     if (status) {
       status.phase = "proof-ready";
-      status.proof = proof;
+      status.proof = decodedProof;
     }
 
-    return proof;
+    return decodedProof;
   }
 
   /**
-   * Decode the DA Layer response into the Web2JsonProof struct
-   * that the smart contract expects
+   * Decode the DA Layer response_hex (ABI-encoded IWeb2Json.Response)
+   * into the Web2JsonProof struct the smart contract expects.
+   * 
+   * The response_hex encodes:
+   * struct Response {
+   *   bytes32 attestationType;
+   *   bytes32 sourceId;
+   *   uint64 votingRound;
+   *   uint64 lowestUsedTimestamp;
+   *   RequestBody requestBody;
+   *   ResponseBody responseBody;
+   * }
    */
-  private _decodeDALayerResponse(rawData: any): Web2JsonProof {
-    // The DA Layer returns { merkleProof: string[], request: {...}, response: {...} }
-    // We need to reshape it to match our Solidity struct
+  private _decodeResponseHex(merkleProof: string[], responseHex: string): Web2JsonProof {
+    // Use ethers to ABI-decode the response
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    
+    // The IWeb2Json.Response struct ABI
+    const responseType = [
+      "tuple(bytes32 attestationType, bytes32 sourceId, uint64 votingRound, uint64 lowestUsedTimestamp, " +
+      "tuple(string url, string httpMethod, string headers, string queryParams, string body, string postProcessJq, string abiSignature) requestBody, " +
+      "tuple(bytes abiEncodedData) responseBody)"
+    ];
+
+    const decoded = abiCoder.decode(responseType, responseHex);
+    const resp = decoded[0];
+
     return {
-      merkleProof: rawData.merkleProof || [],
+      merkleProof: merkleProof || [],
       data: {
-        attestationType: rawData.request?.attestationType || ATTESTATION_TYPE,
-        sourceId: rawData.request?.sourceId || SOURCE_ID,
-        votingRound: rawData.request?.votingRound || 0,
-        lowestUsedTimestamp: rawData.request?.lowestUsedTimestamp || 0,
+        attestationType: resp.attestationType,
+        sourceId: resp.sourceId,
+        votingRound: Number(resp.votingRound),
+        lowestUsedTimestamp: Number(resp.lowestUsedTimestamp),
         requestBody: {
-          url: rawData.request?.requestBody?.url || "",
-          httpMethod: rawData.request?.requestBody?.httpMethod || "",
-          headers: rawData.request?.requestBody?.headers || "",
-          queryParams: rawData.request?.requestBody?.queryParams || "",
-          body: rawData.request?.requestBody?.body || "",
-          postProcessJq: rawData.request?.requestBody?.postProcessJq || "",
-          abiSignature: rawData.request?.requestBody?.abiSignature || "",
+          url: resp.requestBody.url,
+          httpMethod: resp.requestBody.httpMethod,
+          headers: resp.requestBody.headers,
+          queryParams: resp.requestBody.queryParams,
+          body: resp.requestBody.body,
+          postProcessJq: resp.requestBody.postProcessJq,
+          abiSignature: resp.requestBody.abiSignature,
         },
         responseBody: {
-          abiEncodedData: rawData.response?.responseBody?.abiEncodedData || "0x",
+          abiEncodedData: resp.responseBody.abiEncodedData,
         },
       },
     };
@@ -406,8 +499,68 @@ export class FDCService {
     gistId: string,
   ): Promise<{ proof: Web2JsonProof; attestationId: string }> {
     const { abiEncodedRequest, attestationId } = await this.prepareGistAttestation(gistId);
+    console.log(`[FDC] Prepared Gist Attestation: ID=${attestationId}`);
+    console.log(`[FDC] ABI Encoded Request (first 50 chars): ${abiEncodedRequest.slice(0, 50)}...`);
 
     const { votingRound } = await this.submitAttestationRequest(
+      abiEncodedRequest,
+      attestationId,
+    );
+    console.log(`[FDC] Submitted Request. Voting Round: ${votingRound}`);
+
+    // Wait for finalization + buffer
+    const finalizationBufferMs = 10000; 
+    console.log(`[FDC] Waiting for finalization...`);
+    const finalized = await this.waitForRoundFinalization(votingRound, attestationId);
+    if (!finalized) {
+      throw new Error("Attestation round did not finalize in time");
+    }
+    console.log(`[FDC] Round ${votingRound} finalized. Waiting ${finalizationBufferMs/1000}s for DA Layer sync...`);
+    await new Promise(r => setTimeout(r, finalizationBufferMs));
+
+    const proof = await this.fetchProof(abiEncodedRequest, votingRound, attestationId);
+    console.log(`[FDC] Proof fetched successfully!`);
+
+    return { proof, attestationId };
+  }
+
+  /**
+   * Attest a generic URL (IPFS, HTTPS, etc.) via Web2Json
+   * Verifies the URL is accessible and returns content hash
+   */
+  async attestUrl(
+    url: string,
+  ): Promise<{ proof: Web2JsonProof; attestationId: string; txHash?: string; votingRound?: number }> {
+    // Determine URL type and build appropriate request
+    let httpMethod = "GET";
+    let postProcessJq = `{ url: "${url}", status: "accessible", hash: (. | tostring | @base64) }`;
+    let abiSignature = buildAbiSignature([
+      { name: "url", type: "string" },
+      { name: "status", type: "string" },
+      { name: "hash", type: "string" },
+    ]);
+    
+    // For IPFS URLs, convert to gateway
+    let fetchUrl = url;
+    if (url.startsWith("ipfs://")) {
+      const cid = url.replace("ipfs://", "");
+      fetchUrl = `https://ipfs.io/ipfs/${cid}`;
+      postProcessJq = `{ cid: "${cid}", gateway: "ipfs.io", accessible: true }`;
+      abiSignature = buildAbiSignature([
+        { name: "cid", type: "string" },
+        { name: "gateway", type: "string" },
+        { name: "accessible", type: "bool" },
+      ]);
+    }
+    
+    const { abiEncodedRequest, attestationId } = await this._prepareRequest(
+      fetchUrl,
+      httpMethod,
+      postProcessJq,
+      abiSignature,
+    );
+
+    const { txHash, votingRound } = await this.submitAttestationRequest(
       abiEncodedRequest,
       attestationId,
     );
@@ -419,7 +572,7 @@ export class FDCService {
 
     const proof = await this.fetchProof(abiEncodedRequest, votingRound, attestationId);
 
-    return { proof, attestationId };
+    return { proof, attestationId, txHash, votingRound };
   }
 
   // ═══════════════════════════════════════════════════════════

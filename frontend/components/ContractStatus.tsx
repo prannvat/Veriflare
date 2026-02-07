@@ -21,13 +21,13 @@ export function ContractStatus() {
   const isSupported = chainId === 114 || chainId === 14;
 
   return (
-    <div className="bg-gradient-to-r from-purple-900/50 to-blue-900/50 rounded-xl p-6 border border-purple-500/30">
-      <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-        <span className="w-3 h-3 rounded-full bg-green-400 animate-pulse"></span>
-        Live Contract Status
+    <div className="bg-white/[0.02] rounded-xl p-6 border border-white/[0.08]">
+      <h3 className="text-sm font-medium text-white/60 mb-5 flex items-center gap-2 uppercase tracking-wider">
+        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+        Contract Status
       </h3>
       
-      <div className="grid grid-cols-2 gap-4 text-sm">
+      <div className="grid grid-cols-2 gap-6 text-sm">
         {/* Network Info */}
         <div className="space-y-2">
           <div>
@@ -85,14 +85,14 @@ export function ContractStatus() {
       </div>
 
       {!isConnected && (
-        <div className="mt-4 text-center text-gray-400 text-sm">
+        <div className="mt-5 pt-4 border-t border-white/[0.05] text-center text-white/40 text-sm">
           Connect wallet to interact with the contract
         </div>
       )}
 
       {isConnected && !isSupported && (
-        <div className="mt-4 p-3 bg-red-500/20 rounded-lg text-red-400 text-sm text-center">
-          Please switch to Coston2 Testnet (Chain ID: 114)
+        <div className="mt-5 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm text-center">
+          Please switch to Coston2 Testnet
         </div>
       )}
     </div>
@@ -104,8 +104,8 @@ export function ContractStatus() {
  */
 export function LiveBadge() {
   return (
-    <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-green-500/20 rounded-full text-green-400 text-xs font-medium">
-      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+    <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/[0.03] border border-white/10 rounded-full text-white/60 text-xs font-medium tracking-wide uppercase">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
       Live on Coston2
     </div>
   );
