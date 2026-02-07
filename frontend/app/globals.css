@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 240, 240, 240;
+  --background-rgb: 8, 8, 16;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background-color: #050505;
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.03) 0%, transparent 70%);
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Minimalist Glass utility */
+@layer utilities {
+  .glass {
+    @apply bg-white/[0.03] backdrop-blur-md border border-white/[0.06];
+  }
+
+  .glass-hover {
+    @apply hover:bg-white/[0.06] hover:border-white/[0.1] transition-all duration-300 ease-out;
+  }
+}
+
+/* Status badge styles - Minimal */
+@layer components {
+  .status-badge {
+    @apply px-3 py-1 rounded-full text-xs font-medium tracking-wide border;
+  }
+
+  .status-open {
+    @apply border-green-500/20 bg-green-500/5 text-green-400;
+  }
+
+  .status-progress {
+    @apply border-blue-500/20 bg-blue-500/5 text-blue-400;
+  }
+
+  .status-submitted {
+    @apply border-yellow-500/20 bg-yellow-500/5 text-yellow-400;
+  }
+
+  .status-accepted {
+    @apply border-purple-500/20 bg-purple-500/5 text-purple-400;
+  }
+
+  .status-completed {
+    @apply border-emerald-500/20 bg-emerald-500/5 text-emerald-400;
+  }
+
+  .status-disputed {
+    @apply border-red-500/20 bg-red-500/5 text-red-400;
+  }
+
+  .status-cancelled {
+    @apply border-gray-500/20 bg-gray-500/5 text-gray-400;
+  }
+}
+
+/* Button styles - Clean & Flat */
+@layer components {
+  .btn-primary {
+    @apply bg-white text-black px-6 py-3 rounded-lg font-medium 
+           hover:bg-white/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed
+           shadow-[0_0_20px_-10px_rgba(255,255,255,0.3)];
+  }
+
+  .btn-secondary {
+    @apply glass glass-hover px-6 py-3 rounded-lg font-medium text-white/90;
+  }
+
+  .btn-danger {
+    @apply glass border-red-500/20 text-red-400 px-6 py-3 rounded-lg font-medium
+           hover:bg-red-500/10 hover:border-red-500/30 transition-all;
+  }
+}
+
+/* Card styles - Minimal Glass */
+@layer components {
+  .card {
+    @apply glass rounded-xl p-6;
+  }
+
+  .card-hover {
+    @apply glass glass-hover rounded-xl p-6 cursor-pointer;
+  }
+}
+
+/* Input styles - Understated */
+@layer components {
+  .input {
+    @apply w-full bg-white/[0.02] border border-white/[0.08] rounded-lg px-4 py-3
+           text-white placeholder-white/30 focus:outline-none focus:border-white/20
+           focus:bg-white/[0.04] transition-all;
+  }
+
+  .textarea {
+    @apply input resize-none;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-white/50 mb-2 uppercase tracking-wider text-[10px];
+  }
+}
