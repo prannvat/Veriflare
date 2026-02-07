@@ -4,158 +4,167 @@ import { FDCService } from "../services/fdc";
 const router = Router();
 const fdcService = new FDCService();
 
+// ═══════════════════════════════════════════════════════════════
+//   Real FDC attestation endpoints
+//
+//   Full flow (frontend orchestrates):
+//     1. POST /prepare-commit   → get abiEncodedRequest + attestationId
+//     2. POST /submit           → submit to FdcHub on-chain
+//     3. POST /wait             → poll until round finalizes
+//     4. POST /proof            → fetch Merkle proof from DA Layer
+//
+//   Or single-step:
+//     POST /attest-commit       → runs all 4 steps in one call
+//     POST /attest-gist         → runs all 4 steps for identity linking
+// ═══════════════════════════════════════════════════════════════
+
 /**
- * POST /api/fdc/request-attestation
- * Request an attestation from Flare Data Connector
+ * POST /api/fdc/prepare-commit
+ * Step 1: Prepare attestation request via verifier server
  */
-router.post("/request-attestation", async (req, res) => {
+router.post("/prepare-commit", async (req, res) => {
   try {
-    const { type, params } = req.body;
-
-    if (!type || !params) {
-      return res.status(400).json({ error: "Missing type or params" });
+    const { repoFullName, commitSha } = req.body;
+    if (!repoFullName || !commitSha) {
+      return res.status(400).json({ error: "Missing repoFullName or commitSha" });
     }
 
-    let attestationRequest;
-
-    switch (type) {
-      case "github-commit":
-        attestationRequest = await fdcService.requestCommitAttestation(
-          params.repoFullName,
-          params.commitHash
-        );
-        break;
-
-      case "github-gist":
-        attestationRequest = await fdcService.requestGistAttestation(
-          params.gistId,
-          params.expectedContent
-        );
-        break;
-
-      default:
-        return res.status(400).json({ error: "Unknown attestation type" });
-    }
-
-    res.json({
-      success: true,
-      attestationId: attestationRequest.id,
-      status: attestationRequest.status,
-    });
-  } catch (error) {
-    console.error("Request attestation error:", error);
-    res.status(500).json({ error: "Failed to request attestation" });
+    const result = await fdcService.prepareCommitAttestation(repoFullName, commitSha);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Prepare commit attestation error:", error);
+    res.status(500).json({ error: error.message || "Failed to prepare attestation" });
   }
 });
 
 /**
- * GET /api/fdc/attestation/:id
- * Get attestation status and proof
+ * POST /api/fdc/prepare-gist
+ * Step 1: Prepare attestation request for gist identity linking
  */
-router.get("/attestation/:id", async (req, res) => {
+router.post("/prepare-gist", async (req, res) => {
   try {
-    const { id } = req.params;
+    const { gistId } = req.body;
+    if (!gistId) {
+      return res.status(400).json({ error: "Missing gistId" });
+    }
 
-    const attestation = await fdcService.getAttestation(id);
-
-    res.json(attestation);
-  } catch (error) {
-    console.error("Get attestation error:", error);
-    res.status(500).json({ error: "Failed to get attestation" });
+    const result = await fdcService.prepareGistAttestation(gistId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Prepare gist attestation error:", error);
+    res.status(500).json({ error: error.message || "Failed to prepare attestation" });
   }
 });
 
 /**
- * POST /api/fdc/verify-commit
- * Verify a GitHub commit for code delivery
+ * POST /api/fdc/submit
+ * Step 2: Submit attestation request to FdcHub on-chain
  */
-router.post("/verify-commit", async (req, res) => {
+router.post("/submit", async (req, res) => {
   try {
-    const {
-      jobId,
-      repoFullName,
-      commitHash,
-      expectedTreeHash,
-      expectedAuthor,
-      deadline,
-    } = req.body;
-
-    // Fetch commit data from GitHub
-    const commitData = await fdcService.fetchCommitData(repoFullName, commitHash);
-
-    // Verify all conditions
-    const verification = {
-      repoMatches: true, // Already fetched from correct repo
-      authorMatches: commitData.author === expectedAuthor,
-      treeHashMatches: commitData.treeHash === expectedTreeHash,
-      withinDeadline: commitData.timestamp <= deadline,
-    };
-
-    const allValid = Object.values(verification).every(Boolean);
-
-    if (allValid) {
-      // Generate FDC proof for on-chain verification
-      const proof = await fdcService.generateCommitProof(
-        repoFullName,
-        commitHash,
-        commitData
-      );
-
-      res.json({
-        success: true,
-        verification,
-        proof,
-        commitData,
-      });
-    } else {
-      res.json({
-        success: false,
-        verification,
-        errors: Object.entries(verification)
-          .filter(([, valid]) => !valid)
-          .map(([check]) => check),
-      });
+    const { abiEncodedRequest, attestationId } = req.body;
+    if (!abiEncodedRequest || !attestationId) {
+      return res.status(400).json({ error: "Missing abiEncodedRequest or attestationId" });
     }
-  } catch (error) {
-    console.error("Verify commit error:", error);
-    res.status(500).json({ error: "Failed to verify commit" });
+
+    const result = await fdcService.submitAttestationRequest(abiEncodedRequest, attestationId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Submit attestation error:", error);
+    res.status(500).json({ error: error.message || "Failed to submit attestation" });
   }
 });
 
 /**
- * POST /api/fdc/verify-identity
- * Verify GitHub identity via gist
+ * POST /api/fdc/wait
+ * Step 3: Wait for voting round finalization
  */
-router.post("/verify-identity", async (req, res) => {
+router.post("/wait", async (req, res) => {
   try {
-    const { gitHubUsername, walletAddress, gistId } = req.body;
-
-    const verification = await fdcService.verifyGitHubIdentity(
-      gitHubUsername,
-      walletAddress,
-      gistId
-    );
-
-    if (verification.valid) {
-      // Generate proof for on-chain identity linking
-      const proof = await fdcService.generateIdentityProof(
-        gitHubUsername,
-        walletAddress
-      );
-
-      res.json({
-        success: true,
-        proof,
-      });
-    } else {
-      res.json({
-        success: false,
-        error: verification.error,
-      });
+    const { votingRound, attestationId } = req.body;
+    if (votingRound === undefined || !attestationId) {
+      return res.status(400).json({ error: "Missing votingRound or attestationId" });
     }
-  } catch (error) {
-    console.error("Verify identity error:", error);
-    res.status(500).json({ error: "Failed to verify identity" });
+
+    const finalized = await fdcService.waitForRoundFinalization(votingRound, attestationId);
+    res.json({ success: true, finalized });
+  } catch (error: any) {
+    console.error("Wait for finalization error:", error);
+    res.status(500).json({ error: error.message || "Failed waiting for finalization" });
+  }
+});
+
+/**
+ * POST /api/fdc/proof
+ * Step 4: Fetch Merkle proof from DA Layer
+ */
+router.post("/proof", async (req, res) => {
+  try {
+    const { abiEncodedRequest, votingRound, attestationId } = req.body;
+    if (!abiEncodedRequest || votingRound === undefined || !attestationId) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const proof = await fdcService.fetchProof(abiEncodedRequest, votingRound, attestationId);
+    res.json({ success: true, proof });
+  } catch (error: any) {
+    console.error("Fetch proof error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch proof" });
+  }
+});
+
+/**
+ * POST /api/fdc/attest-commit
+ * Full pipeline: prepare → submit → wait → proof (single call)
+ */
+router.post("/attest-commit", async (req, res) => {
+  try {
+    const { repoFullName, commitSha } = req.body;
+    if (!repoFullName || !commitSha) {
+      return res.status(400).json({ error: "Missing repoFullName or commitSha" });
+    }
+
+    const result = await fdcService.attestCommit(repoFullName, commitSha);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Attest commit error:", error);
+    res.status(500).json({ error: error.message || "Failed to attest commit" });
+  }
+});
+
+/**
+ * POST /api/fdc/attest-gist
+ * Full pipeline for identity linking
+ */
+router.post("/attest-gist", async (req, res) => {
+  try {
+    const { gistId } = req.body;
+    if (!gistId) {
+      return res.status(400).json({ error: "Missing gistId" });
+    }
+
+    const result = await fdcService.attestGist(gistId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Attest gist error:", error);
+    res.status(500).json({ error: error.message || "Failed to attest gist" });
+  }
+});
+
+/**
+ * GET /api/fdc/status/:id
+ * Check attestation progress
+ */
+router.get("/status/:id", async (req, res) => {
+  try {
+    const status = fdcService.getAttestationStatus(req.params.id);
+    if (!status) {
+      return res.status(404).json({ error: "Attestation not found" });
+    }
+    res.json(status);
+  } catch (error: any) {
+    console.error("Get status error:", error);
+    res.status(500).json({ error: error.message || "Failed to get status" });
   }
 });
 

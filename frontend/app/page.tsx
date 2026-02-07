@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useAccount } from "wagmi";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { ConnectButton } from "@/components/ConnectButton";
+import { ContractStatus, LiveBadge } from "@/components/ContractStatus";
 import {
   Shield,
   FileCheck,
@@ -30,6 +31,9 @@ export default function Home() {
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <div className="flex justify-center gap-3 mb-8">
+              <LiveBadge />
+            </div>
+            <div className="flex justify-center gap-3 mb-4">
               {["💻", "🎨", "🎵", "📸", "🎬", "✍️"].map((emoji, i) => (
                 <span key={i} className="text-2xl opacity-40">{emoji}</span>
               ))}
@@ -55,12 +59,17 @@ export default function Home() {
                   </Link>
                 </>
               ) : (
-                <div className="[&_button]:!bg-white [&_button]:!text-black [&_button]:!font-medium [&_button]:!rounded-lg [&_button]:!px-6 [&_button]:!py-3 [&_button]:hover:!bg-white/90">
-                  <ConnectButton />
-                </div>
+                <ConnectButton />
               )}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Contract Status Section */}
+      <section className="py-8 border-t border-white/[0.05]">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <ContractStatus />
         </div>
       </section>
 
@@ -226,22 +235,73 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section className="py-32 border-t border-white/[0.05]">
-        <div className="max-w-3xl mx-auto px-4 text-center">
-          <h2 className="text-3xl font-light text-white mb-6">
-            Ready to freelance trustlessly?
-          </h2>
-          <div className="flex justify-center mt-8">
-          {isConnected ? (
-            <Link href="/jobs" className="btn-primary inline-flex items-center gap-2">
-              Explore Jobs
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          ) : (
-            <div className="[&_button]:!bg-white [&_button]:!text-black [&_button]:!font-medium [&_button]:!rounded-lg [&_button]:!px-8 [&_button]:!py-4 [&_button]:hover:!bg-white/90">
-               <ConnectButton />
+      <section className="py-24 border-t border-white/[0.05]">
+        <div className="max-w-5xl mx-auto px-4">
+          {/* Testnet Banner */}
+          <div className="mb-16 p-8 rounded-2xl bg-gradient-to-br from-orange-500/10 via-transparent to-pink-500/10 border border-orange-500/20">
+            <div className="flex flex-col md:flex-row items-center gap-8">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-3">
+                  <Zap className="w-5 h-5 text-orange-400" />
+                  <span className="text-orange-400 font-medium text-sm uppercase tracking-wider">Demo Mode</span>
+                </div>
+                <h3 className="text-xl font-medium text-white mb-2">Try it on Coston2 Testnet</h3>
+                <p className="text-white/50 text-sm mb-4">
+                  Get free testnet tokens to experience the full flow — no real money needed.
+                </p>
+                <ol className="space-y-2 text-white/60 text-sm">
+                  <li className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-xs">1</span>
+                    Connect your wallet (MetaMask recommended)
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-xs">2</span>
+                    Get free C2FLR from the faucet
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-xs">3</span>
+                    Accept a job, submit work, get paid!
+                  </li>
+                </ol>
+              </div>
+              <div className="flex flex-col gap-3">
+                <a
+                  href="https://faucet.flare.network/coston2"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary flex items-center gap-2 justify-center"
+                >
+                  Get Free Tokens
+                  <ArrowRight className="w-4 h-4" />
+                </a>
+                <a
+                  href="https://coston2-explorer.flare.network"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary flex items-center gap-2 justify-center"
+                >
+                  View Explorer
+                </a>
+              </div>
             </div>
-          )}
+          </div>
+
+          <div className="text-center">
+            <h2 className="text-3xl font-light text-white mb-6">
+              Ready to freelance trustlessly?
+            </h2>
+            <div className="flex justify-center mt-8">
+            {isConnected ? (
+              <Link href="/jobs" className="btn-primary inline-flex items-center gap-2">
+                Explore Jobs
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            ) : (
+              <div className="[&_button]:!bg-white [&_button]:!text-black [&_button]:!font-medium [&_button]:!rounded-lg [&_button]:!px-8 [&_button]:!py-4 [&_button]:hover:!bg-white/90">
+                 <ConnectButton />
+              </div>
+            )}
+            </div>
           </div>
         </div>
       </section>

@@ -4,108 +4,126 @@ pragma solidity ^0.8.19;
 import "../interfaces/IFlareDataConnector.sol";
 
 /**
- * @title MockFlareDataConnector
- * @notice Mock FDC for testing and development
- * @dev Always returns true for proofs - DO NOT USE IN PRODUCTION
+ * @title MockContractRegistry
+ * @notice Mocks the Flare ContractRegistry for local/test deployments
+ * @dev Returns addresses of sibling mock contracts (MockFdcVerification)
  */
-contract MockFlareDataConnector is IFlareDataConnector {
-    
-    /// @notice Whether to auto-approve all proofs
+contract MockContractRegistry is IFlareContractRegistry {
+    mapping(string => address) internal _contracts;
+
+    function setContract(string calldata name, address addr) external {
+        _contracts[name] = addr;
+    }
+
+    function getContractAddressByName(string calldata name)
+        external
+        view
+        override
+        returns (address)
+    {
+        return _contracts[name];
+    }
+}
+
+/**
+ * @title MockFdcVerification
+ * @notice Mocks the FdcVerification contract for testing
+ * @dev By default auto-approves all proofs. Toggle with setAutoApprove(false).
+ */
+contract MockFdcVerification is IFdcVerification {
     bool public autoApprove = true;
 
-    /// @notice Mapping of proof hashes to validity
-    mapping(bytes32 => bool) public validProofs;
-
-    /// @notice Events for testing
-    event ProofSubmitted(bytes proof);
-    event ProofValidated(bytes32 proofHash, bool valid);
-
-    /**
-     * @notice Set auto-approve mode
-     */
+    /// @notice Set auto-approve mode
     function setAutoApprove(bool _autoApprove) external {
         autoApprove = _autoApprove;
     }
 
-    /**
-     * @notice Pre-register a valid proof (for testing specific scenarios)
-     */
-    function registerValidProof(bytes calldata proof) external {
-        validProofs[keccak256(proof)] = true;
+    /// @notice Always returns autoApprove value
+    function verifyWeb2Json(Web2JsonProof calldata)
+        external
+        view
+        override
+        returns (bool)
+    {
+        return autoApprove;
     }
+}
 
-    /**
-     * @notice Invalidate a proof
-     */
-    function invalidateProof(bytes calldata proof) external {
-        validProofs[keccak256(proof)] = false;
+/**
+ * @title MockFdcHub
+ * @notice Mocks the FdcHub for testing attestation request submission
+ */
+contract MockFdcHub is IFdcHub {
+    event AttestationRequested(bytes data, uint256 fee);
+
+    function requestAttestation(bytes calldata _data) external payable override {
+        emit AttestationRequested(_data, msg.value);
     }
+}
 
-    /**
-     * @notice Verify a proof - mock implementation
-     */
-    function verifyProof(bytes calldata proof) external view override returns (bool valid) {
-        emit ProofSubmitted(proof);
-        
-        if (autoApprove) {
-            return true;
-        }
-        
-        return validProofs[keccak256(proof)];
+/**
+ * @title MockFlareSetup
+ * @notice Convenience contract that deploys all mocks and wires them together
+ * @dev Use in tests/deploy scripts:
+ *        MockFlareSetup setup = new MockFlareSetup();
+ *        FreelancerEscrow escrow = new FreelancerEscrow(setup.registry(), treasury);
+ */
+contract MockFlareSetup {
+    MockContractRegistry public registry;
+    MockFdcVerification public fdcVerification;
+    MockFdcHub public fdcHub;
+
+    constructor() {
+        registry = new MockContractRegistry();
+        fdcVerification = new MockFdcVerification();
+        fdcHub = new MockFdcHub();
+
+        registry.setContract("FdcVerification", address(fdcVerification));
+        registry.setContract("FdcHub", address(fdcHub));
     }
+}
 
-    /**
-     * @notice Verify attestation - mock implementation
-     */
-    function verifyAttestation(
-        bytes32 attestationType,
-        bytes32 sourceId,
-        bytes calldata requestBody,
-        bytes calldata responseBody
-    ) external view override returns (bool valid) {
-        // Mock: combine all params into a proof hash
-        bytes32 proofHash = keccak256(abi.encodePacked(
-            attestationType,
-            sourceId,
-            requestBody,
-            responseBody
-        ));
-
-        if (autoApprove) {
-            return true;
-        }
-
-        return validProofs[proofHash];
-    }
-
-    /**
-     * @notice Helper to encode a commit attestation for testing
-     */
-    function encodeCommitAttestation(
-        string calldata repoFullName,
-        string calldata commitHash,
-        bytes32 treeHash,
-        string calldata authorGitHub,
+/**
+ * @notice Helper library to build mock Web2Json proofs for testing
+ */
+library MockProofBuilder {
+    function buildCommitProof(
+        string memory repoFullName,
+        string memory commitSha,
+        string memory treeHash,
+        string memory authorLogin,
         uint256 commitTimestamp
-    ) external pure returns (bytes memory) {
-        return abi.encode(
-            repoFullName,
-            commitHash,
-            treeHash,
-            authorGitHub,
-            commitTimestamp
-        );
+    ) internal pure returns (Web2JsonProof memory proof) {
+        GitHubCommitAttestation memory commit = GitHubCommitAttestation({
+            repoFullName: repoFullName,
+            commitSha: commitSha,
+            treeHash: treeHash,
+            authorLogin: authorLogin,
+            commitTimestamp: commitTimestamp
+        });
+
+        proof.merkleProof = new bytes32[](0);
+        proof.data.attestationType = bytes32("Web2Json");
+        proof.data.sourceId = bytes32("PublicWeb2");
+        proof.data.votingRound = 0;
+        proof.data.lowestUsedTimestamp = 0;
+        proof.data.responseBody.abiEncodedData = abi.encode(commit);
     }
 
-    /**
-     * @notice Helper to encode a gist attestation for testing
-     */
-    function encodeGistAttestation(
-        string calldata gistId,
-        string calldata ownerGitHub,
-        string calldata content,
-        uint256 createdAt
-    ) external pure returns (bytes memory) {
-        return abi.encode(gistId, ownerGitHub, content, createdAt);
+    function buildGistProof(
+        string memory ownerLogin,
+        string memory content
+    ) internal pure returns (Web2JsonProof memory proof) {
+        GitHubGistAttestation memory gist = GitHubGistAttestation({
+            ownerLogin: ownerLogin,
+            content: content
+        });
+
+        proof.merkleProof = new bytes32[](0);
+        proof.data.attestationType = bytes32("Web2Json");
+        proof.data.sourceId = bytes32("PublicWeb2");
+        proof.data.votingRound = 0;
+        proof.data.lowestUsedTimestamp = 0;
+        proof.data.responseBody.abiEncodedData = abi.encode(gist);
     }
 }

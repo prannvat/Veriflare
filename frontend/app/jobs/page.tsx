@@ -1,141 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { Plus, Search, Filter, LayoutGrid } from "lucide-react";
+import { Plus, Search, Filter, LayoutGrid, Zap } from "lucide-react";
+import Link from "next/link";
 import { JobCard, CreateJobModal } from "@/components";
-import { Job, JOB_CATEGORIES, JobCategory } from "@/lib/store";
-
-// Diverse mock data across categories
-const MOCK_JOBS: Job[] = [
-  {
-    id: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-    client: "0x1234567890123456789012345678901234567890",
-    freelancer: "0x0000000000000000000000000000000000000000",
-    freelancerGitHub: "",
-    paymentAmount: BigInt("1000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "acme-corp/e-commerce-api",
-    targetBranch: "main",
-    requirementsHash: "0xabcd",
-    acceptedBuildHash: "0x0000",
-    acceptedSourceHash: "0x0000",
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 7,
-    reviewPeriod: 86400 * 3,
-    codeDeliveryDeadline: 0,
-    status: 0,
-    category: "development",
-    title: "E-Commerce REST API",
-    verificationType: "github_commit",
-  },
-  {
-    id: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-    client: "0x1234567890123456789012345678901234567890",
-    freelancer: "0x9876543210987654321098765432109876543210",
-    freelancerGitHub: "alice-design",
-    paymentAmount: BigInt("5000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "ipfs://brand-identity-v2",
-    targetBranch: "final",
-    requirementsHash: "0xefgh",
-    acceptedBuildHash: "0x1111",
-    acceptedSourceHash: "0x2222",
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 14,
-    reviewPeriod: 86400 * 5,
-    codeDeliveryDeadline: 0,
-    status: 2,
-    category: "design",
-    title: "Brand Identity Package",
-    verificationType: "ipfs_delivery",
-  },
-  {
-    id: "0x7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456",
-    client: "0x1234567890123456789012345678901234567890",
-    freelancer: "0x5555555555555555555555555555555555555555",
-    freelancerGitHub: "bob-beats",
-    paymentAmount: BigInt("10000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "ipfs://album-masters",
-    targetBranch: "v1.0",
-    requirementsHash: "0xijkl",
-    acceptedBuildHash: "0x3333",
-    acceptedSourceHash: "0x4444",
-    deadline: Math.floor(Date.now() / 1000) - 86400,
-    reviewPeriod: 86400 * 7,
-    codeDeliveryDeadline: Math.floor(Date.now() / 1000) + 86400,
-    status: 3,
-    category: "music",
-    title: "10-Track Album Production",
-    verificationType: "ipfs_delivery",
-  },
-  {
-    id: "0x456789abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234",
-    client: "0xAAAABBBBCCCCDDDDEEEEFFFF0000111122223333",
-    freelancer: "0x0000000000000000000000000000000000000000",
-    freelancerGitHub: "",
-    paymentAmount: BigInt("3000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "https://gallery.example.com/product-shoot",
-    targetBranch: "high-res",
-    requirementsHash: "0xmnop",
-    acceptedBuildHash: "0x0000",
-    acceptedSourceHash: "0x0000",
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 10,
-    reviewPeriod: 86400 * 2,
-    codeDeliveryDeadline: 0,
-    status: 0,
-    category: "photography",
-    title: "Product Photography — 50 SKUs",
-    verificationType: "ipfs_delivery",
-  },
-  {
-    id: "0xdef0123456789abcdef1234567890abcdef1234567890abcdef1234567890abcd",
-    client: "0xBBBBCCCCDDDDEEEEFFFF000011112222333344445",
-    freelancer: "0x0000000000000000000000000000000000000000",
-    freelancerGitHub: "",
-    paymentAmount: BigInt("8000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "https://ads.brandco.io/campaign-q1",
-    targetBranch: "launch",
-    requirementsHash: "0xqrst",
-    acceptedBuildHash: "0x0000",
-    acceptedSourceHash: "0x0000",
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 21,
-    reviewPeriod: 86400 * 3,
-    codeDeliveryDeadline: 0,
-    status: 0,
-    category: "advertising",
-    title: "Social Media Ad Campaign",
-    verificationType: "url_live",
-  },
-  {
-    id: "0xef0123456789abcdef1234567890abcdef1234567890abcdef1234567890abcde",
-    client: "0xCCCCDDDDEEEEFFFF00001111222233334444555566",
-    freelancer: "0x7777888899990000AAAABBBBCCCCDDDDEEEEFFFF",
-    freelancerGitHub: "motion-maya",
-    paymentAmount: BigInt("15000000000000000000"),
-    paymentToken: "0x0000000000000000000000000000000000000000",
-    clientRepo: "ipfs://explainer-video-v3",
-    targetBranch: "final-cut",
-    requirementsHash: "0xuvwx",
-    acceptedBuildHash: "0x5555",
-    acceptedSourceHash: "0x6666",
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 5,
-    reviewPeriod: 86400 * 4,
-    codeDeliveryDeadline: 0,
-    status: 1,
-    category: "video",
-    title: "2-Minute Explainer Video",
-    verificationType: "ipfs_delivery",
-  },
-];
+import { Job, JOB_CATEGORIES, JobCategory, useAppStore } from "@/lib/store";
+import { FLARE_LINKS } from "@/lib/demo-data";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All Status" },
   { value: "0", label: "Open" },
-  { value: "1", label: "In Progress" },
-  { value: "2", label: "Submitted" },
-  { value: "3", label: "Accepted" },
+  { value: "1", label: "Accepted" },
+  { value: "2", label: "In Progress" },
+  { value: "3", label: "Submitted" },
+  { value: "4", label: "Approved" },
   { value: "5", label: "Completed" },
 ];
 
@@ -145,8 +24,21 @@ export default function JobsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  
+  // Use store
+  const { jobs, initDemoJobs } = useAppStore();
+  
+  // Initialize demo jobs on mount
+  useEffect(() => {
+    if (jobs.size === 0) {
+      initDemoJobs();
+    }
+  }, []);
 
-  const filteredJobs = MOCK_JOBS.filter((job) => {
+  // Convert map to array
+  const jobsArray = Array.from(jobs.values());
+
+  const filteredJobs = jobsArray.filter((job) => {
     const searchTarget = (job.title || job.clientRepo).toLowerCase();
     const matchesSearch = searchTarget.includes(searchQuery.toLowerCase());
     const matchesStatus =
@@ -158,6 +50,21 @@ export default function JobsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Demo Banner */}
+      <div className="mb-6 p-4 bg-orange-500/10 border border-orange-500/20 rounded-lg flex items-start gap-3">
+        <Zap className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-orange-400 font-medium text-sm">Demo Mode Active</p>
+          <p className="text-orange-400/70 text-xs mt-1">
+            This is a proof-of-concept demo. Get testnet C2FLR from the{" "}
+            <a href={FLARE_LINKS.faucet} target="_blank" className="underline hover:text-orange-300">
+              Coston2 faucet
+            </a>
+            {" "}to test real transactions.
+          </p>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>

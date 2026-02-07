@@ -1,7 +1,8 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { useAccount } from "wagmi";
+import { useParams, useRouter } from "next/navigation";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -13,37 +14,34 @@ import {
   ExternalLink,
   AlertCircle,
   Shield,
+  CheckCircle,
+  Upload,
+  Loader2,
+  DollarSign,
+  XCircle,
+  Zap,
+  Hash,
 } from "lucide-react";
-import { StatusBadge, BuildPreview } from "@/components";
+import { StatusBadge } from "@/components";
 import {
-  formatDate,
   formatFLR,
   formatTimeRemaining,
   truncateAddress,
-  getStatusLabel,
 } from "@/lib/utils";
-import { JOB_CATEGORIES, VERIFICATION_TYPES } from "@/lib/store";
+import { JOB_CATEGORIES, VERIFICATION_TYPES, Job, useAppStore } from "@/lib/store";
+import { api } from "@/lib/api";
+import { DEMO_DELIVERABLES, simulateFdcAttestation, FLARE_LINKS } from "@/lib/demo-data";
 
-// Mock job detail
-const MOCK_JOB = {
-  id: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-  client: "0x1234567890123456789012345678901234567890",
-  freelancer: "0x9876543210987654321098765432109876543210",
-  freelancerGitHub: "alice-design",
-  paymentAmount: BigInt("5000000000000000000"),
-  paymentToken: "0x0000000000000000000000000000000000000000",
-  clientRepo: "ipfs://brand-identity-v2",
-  targetBranch: "final",
-  requirementsHash: "0xefgh1234...",
-  acceptedBuildHash: "0x1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff",
-  acceptedSourceHash: "0xaaaabbbbccccddddeeeeffff00001111222233334444555566667777888899990000",
-  deadline: Math.floor(Date.now() / 1000) + 86400 * 14,
-  reviewPeriod: 86400 * 5,
-  codeDeliveryDeadline: 0,
-  status: 2,
-  category: "design" as const,
-  title: "Brand Identity Package",
-  verificationType: "ipfs_delivery" as const,
+// Job statuses
+const JOB_STATUS = {
+  OPEN: 0,
+  ACCEPTED: 1,
+  IN_PROGRESS: 2,
+  SUBMITTED: 3,
+  APPROVED: 4,
+  COMPLETED: 5,
+  DISPUTED: 6,
+  CANCELLED: 7,
 };
 
 const MOCK_REQUIREMENTS = [
@@ -56,14 +54,178 @@ const MOCK_REQUIREMENTS = [
 
 export default function JobDetailPage() {
   const params = useParams();
-  const { address } = useAccount();
+  const router = useRouter();
+  const { address, isConnected } = useAccount();
   const jobId = params.id as string;
 
-  const job = MOCK_JOB; // In production, fetch from contract
+  // Store state
+  const {
+    jobs,
+    initDemoJobs,
+    getJob,
+    acceptJob,
+    submitDeliverable,
+    approveWork,
+    completePayment,
+    fdcStep,
+    fdcStepTitle,
+    fdcStepDescription,
+    setFdcProgress,
+    resetFdc,
+  } = useAppStore();
+
+  // Local state
+  const [mounted, setMounted] = useState(false);
+  const [deliveryUrl, setDeliveryUrl] = useState(DEMO_DELIVERABLES[0].url);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showFdcModal, setShowFdcModal] = useState(false);
+  const [txStatus, setTxStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [proofHash, setProofHash] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+
+  // Initialize demo jobs on mount
+  useEffect(() => {
+    setMounted(true);
+    if (jobs.size === 0) {
+      initDemoJobs();
+    }
+  }, []);
+  
+  // Get current job from store
+  const job = getJob(jobId) || {
+    id: jobId,
+    client: "0x1234567890123456789012345678901234567890",
+    freelancer: "0x0000000000000000000000000000000000000000",
+    freelancerGitHub: "",
+    paymentAmount: BigInt("5000000000000000000"),
+    paymentToken: "0x0000000000000000000000000000000000000000",
+    clientRepo: "ipfs://demo",
+    targetBranch: "main",
+    requirementsHash: "0x...",
+    acceptedBuildHash: "",
+    acceptedSourceHash: "",
+    deadline: Math.floor(Date.now() / 1000) + 86400 * 14,
+    reviewPeriod: 86400 * 3,
+    codeDeliveryDeadline: 0,
+    status: 0,
+    category: "design",
+    title: "Demo Job",
+    verificationType: "ipfs_delivery",
+  };
+
+  // Determine user role
   const isClient = address?.toLowerCase() === job.client.toLowerCase();
-  const isFreelancer = address?.toLowerCase() === job.freelancer.toLowerCase();
+  const isFreelancer = job.freelancer !== "0x0000000000000000000000000000000000000000" && 
+                       address?.toLowerCase() === job.freelancer.toLowerCase();
+  const isOpen = job.status === JOB_STATUS.OPEN;
+  // For demo: allow accept if connected (even if wallet doesn't match client)
+  const canAccept = isConnected && isOpen;
+  const canSubmit = job.status === JOB_STATUS.ACCEPTED || job.status === JOB_STATUS.IN_PROGRESS;
+  const canApprove = job.status === JOB_STATUS.SUBMITTED;
+  const canClaim = job.status === JOB_STATUS.APPROVED;
+
   const category = JOB_CATEGORIES.find(c => c.value === job.category);
   const verification = VERIFICATION_TYPES.find(v => v.value === job.verificationType);
+
+  // ==================== ACTIONS ====================
+
+  const handleAcceptJob = async () => {
+    if (!address) return;
+    setTxStatus("pending");
+    
+    try {
+      // Simulate transaction delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Update store
+      acceptJob(jobId, address);
+      setTxStatus("success");
+    } catch (error) {
+      console.error("Failed to accept job:", error);
+      setTxStatus("error");
+    }
+  };
+
+  const handleSubmitDeliverable = async () => {
+    if (!deliveryUrl) return;
+    setIsSubmitting(true);
+    setTxStatus("pending");
+    setShowSubmitModal(false);
+    setShowFdcModal(true);
+    resetFdc();
+
+    try {
+      // Run FDC attestation simulation with visual progress
+      const result = await simulateFdcAttestation(deliveryUrl, (step, title, description) => {
+        setFdcProgress(step, title, description);
+      });
+      
+      // Update store with delivery
+      const deliveryHash = "0x" + Array.from({length: 64}, () => 
+        Math.floor(Math.random() * 16).toString(16)
+      ).join("");
+      
+      submitDeliverable(jobId, deliveryUrl, deliveryHash);
+      setProofHash(result.proofHash);
+      setTxHash(result.txHash);
+      setTxStatus("success");
+    } catch (error) {
+      console.error("Failed to submit:", error);
+      setTxStatus("error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleApproveWork = async () => {
+    setTxStatus("pending");
+    setShowApproveModal(false);
+    setShowFdcModal(true);
+    resetFdc();
+
+    try {
+      // Run FDC attestation for approval
+      const result = await simulateFdcAttestation(job.clientRepo, (step, title, description) => {
+        setFdcProgress(step, title, description);
+      });
+      
+      // Update store
+      approveWork(jobId);
+      completePayment(jobId);
+      setProofHash(result.proofHash);
+      setTxHash(result.txHash);
+      setTxStatus("success");
+    } catch (error) {
+      console.error("Failed to approve:", error);
+      setTxStatus("error");
+    }
+  };
+
+  const handleClaimPayment = async () => {
+    setTxStatus("pending");
+    setShowFdcModal(true);
+    resetFdc();
+
+    try {
+      // Run FDC attestation for claim
+      const result = await simulateFdcAttestation(job.acceptedBuildHash || job.clientRepo, (step, title, description) => {
+        setFdcProgress(step, title, description);
+      });
+      
+      // Update store
+      completePayment(jobId);
+      setProofHash(result.proofHash);
+      setTxHash(result.txHash);
+      setTxStatus("success");
+    } catch (error) {
+      console.error("Failed to claim:", error);
+      setTxStatus("error");
+    }
+  };
+
+  // ==================== RENDER ====================
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -88,60 +250,125 @@ export default function JobDetailPage() {
             )}
             <StatusBadge status={job.status} size="lg" />
           </div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight mb-2">{job.title || job.clientRepo}</h1>
+          <h1 className="text-2xl font-semibold text-white tracking-tight mb-2">
+            {job.title || job.clientRepo}
+          </h1>
           <p className="text-white/40 font-mono text-xs tracking-wider">
             ID: {jobId?.slice(0, 20)}...
           </p>
         </div>
 
+        {/* Action Buttons */}
         <div className="flex items-center gap-3">
-          {isClient && job.status === 2 && (
-            <button className="btn-primary">Review Deliverable</button>
+          {canAccept && (
+            <button 
+              onClick={handleAcceptJob}
+              disabled={txStatus === "pending"}
+              className="btn-primary flex items-center gap-2"
+            >
+              {txStatus === "pending" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle className="w-4 h-4" />
+              )}
+              Accept Job
+            </button>
           )}
-          {isFreelancer && job.status === 3 && (
-            <button className="btn-primary">Deliver Files & Claim</button>
+          
+          {canSubmit && (
+            <button 
+              onClick={() => setShowSubmitModal(true)}
+              className="btn-primary flex items-center gap-2"
+            >
+              <Upload className="w-4 h-4" />
+              Submit Deliverable
+            </button>
           )}
-          {!isClient && !isFreelancer && job.status === 0 && (
-            <button className="btn-primary">Accept Job</button>
+          
+          {canApprove && (
+            <button 
+              onClick={() => setShowApproveModal(true)}
+              className="btn-primary flex items-center gap-2"
+            >
+              <CheckCircle className="w-4 h-4" />
+              Approve & Pay
+            </button>
+          )}
+          
+          {canClaim && (
+            <button 
+              onClick={handleClaimPayment}
+              disabled={txStatus === "pending"}
+              className="btn-primary flex items-center gap-2"
+            >
+              {txStatus === "pending" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <DollarSign className="w-4 h-4" />
+              )}
+              Claim Payment
+            </button>
           )}
         </div>
       </div>
 
+      {/* Status Banner */}
+      {job.status === JOB_STATUS.COMPLETED && (
+        <div className="mb-8 p-4 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center gap-3">
+          <CheckCircle className="w-5 h-5 text-green-400" />
+          <div>
+            <p className="text-green-400 font-medium">Job Completed!</p>
+            <p className="text-green-400/70 text-sm">Payment has been released to the freelancer.</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-8">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Deliverable Preview (if submitted) */}
-          {job.status >= 2 && (
-            <BuildPreview
-              jobId={job.id}
-              previewUrl="https://preview.veriflare.io/demo-app"
-              deliverableHash={job.acceptedBuildHash}
-              sourceHash={job.acceptedSourceHash}
-              requirements={MOCK_REQUIREMENTS}
-              isClient={isClient}
-              status={job.status}
-            />
+          {/* Submitted Deliverable Preview */}
+          {job.status >= JOB_STATUS.SUBMITTED && job.acceptedBuildHash && (
+            <div className="card border-green-500/20 bg-green-500/5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-green-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-medium text-white">Deliverable Submitted</h3>
+                  <p className="text-white/50 text-sm">Review the work before approving</p>
+                </div>
+              </div>
+              
+              <div className="p-4 bg-black/30 rounded-lg mb-4">
+                <p className="text-white/60 text-xs uppercase tracking-wider mb-2">Delivery Hash</p>
+                <p className="text-white font-mono text-sm break-all">{job.acceptedBuildHash}</p>
+              </div>
+              
+              <a 
+                href="#" 
+                className="text-blue-400 hover:text-blue-300 flex items-center gap-2 text-sm"
+              >
+                <ExternalLink className="w-4 h-4" />
+                View on IPFS
+              </a>
+            </div>
           )}
 
           {/* Requirements */}
           <div className="card">
-            <h3 className="text-lg font-medium text-white mb-6">
-              Requirements
-            </h3>
-            <div className="prose prose-invert max-w-none">
-              <ul className="space-y-3">
-                {MOCK_REQUIREMENTS.map((req, i) => (
-                  <li key={i} className="text-white/70 flex items-start gap-3 text-sm leading-relaxed">
-                    <span className="text-white/30 mt-0.5">•</span>
-                    {req}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <h3 className="text-lg font-medium text-white mb-6">Requirements</h3>
+            <ul className="space-y-3">
+              {MOCK_REQUIREMENTS.map((req, i) => (
+                <li key={i} className="text-white/70 flex items-start gap-3 text-sm leading-relaxed">
+                  <span className="text-white/30 mt-0.5">•</span>
+                  {req}
+                </li>
+              ))}
+            </ul>
             <div className="mt-6 pt-6 border-t border-white/[0.05]">
               <a
                 href="#"
-                className="text-white/60 hover:text-white hover:underline flex items-center gap-2 text-xs transition-colors"
+                className="text-white/60 hover:text-white flex items-center gap-2 text-xs transition-colors"
               >
                 <FileText className="w-3.5 h-3.5" />
                 View full requirements on IPFS
@@ -150,38 +377,63 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* Timeline / Activity (placeholder) */}
-          <div className="card">
-            <h3 className="text-lg font-medium text-white mb-6">Activity</h3>
-            <div className="space-y-6 relative before:absolute before:inset-0 before:ml-[15px] before:w-px before:bg-white/[0.05]">
-              <div className="relative flex items-start gap-4">
-                <div className="w-8 h-8 rounded-full bg-white/[0.03] border border-white/10 flex items-center justify-center relative z-10">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+          {/* How It Works */}
+          <div className="card bg-white/[0.02]">
+            <h3 className="text-lg font-medium text-white mb-6">How This Works</h3>
+            <div className="space-y-4">
+              <div className="flex gap-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  job.status >= JOB_STATUS.ACCEPTED ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/40'
+                }`}>
+                  1
                 </div>
-                <div className="pt-1">
-                  <p className="text-white/90 text-sm">Job created</p>
-                  <p className="text-white/30 text-xs mt-0.5">2 days ago</p>
-                </div>
-              </div>
-              <div className="relative flex items-start gap-4">
-                <div className="w-8 h-8 rounded-full bg-white/[0.03] border border-white/10 flex items-center justify-center relative z-10">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                </div>
-                <div className="pt-1">
-                  <p className="text-white/90 text-sm">
-                    <span className="text-white font-medium">alice-design</span> accepted
-                    the job
+                <div>
+                  <p className={`font-medium ${job.status >= JOB_STATUS.ACCEPTED ? 'text-green-400' : 'text-white/80'}`}>
+                    Freelancer Accepts
                   </p>
-                  <p className="text-white/30 text-xs mt-0.5">1 day ago</p>
+                  <p className="text-white/50 text-sm">A freelancer takes on the job</p>
                 </div>
               </div>
-              <div className="relative flex items-start gap-4">
-                <div className="w-8 h-8 rounded-full bg-white/[0.03] border border-white/10 flex items-center justify-center relative z-10">
-                  <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+              
+              <div className="flex gap-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  job.status >= JOB_STATUS.SUBMITTED ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/40'
+                }`}>
+                  2
                 </div>
-                <div className="pt-1">
-                  <p className="text-white/90 text-sm">Deliverable submitted for review</p>
-                  <p className="text-white/30 text-xs mt-0.5">5 hours ago</p>
+                <div>
+                  <p className={`font-medium ${job.status >= JOB_STATUS.SUBMITTED ? 'text-green-400' : 'text-white/80'}`}>
+                    Work Submitted
+                  </p>
+                  <p className="text-white/50 text-sm">Deliverable uploaded to IPFS with proof</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  job.status >= JOB_STATUS.APPROVED ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/40'
+                }`}>
+                  3
+                </div>
+                <div>
+                  <p className={`font-medium ${job.status >= JOB_STATUS.APPROVED ? 'text-green-400' : 'text-white/80'}`}>
+                    Client Approves
+                  </p>
+                  <p className="text-white/50 text-sm">Client reviews and approves the work</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  job.status >= JOB_STATUS.COMPLETED ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/40'
+                }`}>
+                  4
+                </div>
+                <div>
+                  <p className={`font-medium ${job.status >= JOB_STATUS.COMPLETED ? 'text-green-400' : 'text-white/80'}`}>
+                    Payment Released
+                  </p>
+                  <p className="text-white/50 text-sm">Funds released from escrow to freelancer</p>
                 </div>
               </div>
             </div>
@@ -199,12 +451,12 @@ export default function JobDetailPage() {
               </span>
             </div>
             <p className="text-white/40 text-xs">
-              Escrowed in smart contract
+              {job.status < JOB_STATUS.COMPLETED ? "Escrowed in smart contract" : "Payment completed"}
             </p>
             <div className="mt-6 pt-4 border-t border-white/[0.05]">
               <p className="text-white/60 text-xs flex items-center gap-2">
-                <Wallet className="w-3.5 h-3.5 text-white/40" />
-                Funds secured on-chain
+                <Shield className="w-3.5 h-3.5 text-white/40" />
+                Secured by Flare FDC
               </p>
             </div>
           </div>
@@ -215,27 +467,7 @@ export default function JobDetailPage() {
             <div className="space-y-5">
               <div>
                 <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">
-                  Deliverable Destination
-                </span>
-                <div className="flex items-center gap-2">
-                  <Package className="w-3.5 h-3.5 text-white/40" />
-                  <span className="text-white font-mono text-sm truncate">{job.clientRepo}</span>
-                </div>
-              </div>
-
-              <div>
-                <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">
-                  Version / Reference
-                </span>
-                <div className="flex items-center gap-2">
-                  <Package className="w-3.5 h-3.5 text-white/40" />
-                  <span className="text-white text-sm">{job.targetBranch}</span>
-                </div>
-              </div>
-
-              <div>
-                <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">
-                  Verification Method
+                  Verification
                 </span>
                 <div className="flex items-center gap-2">
                   <Shield className="w-3.5 h-3.5 text-white/40" />
@@ -250,7 +482,7 @@ export default function JobDetailPage() {
                 <div className="flex items-center gap-2">
                   <Clock className="w-3.5 h-3.5 text-white/40" />
                   <span className="text-white text-sm">
-                    {formatTimeRemaining(job.deadline)}
+                    {mounted ? formatTimeRemaining(job.deadline) : "--"}
                   </span>
                 </div>
               </div>
@@ -282,49 +514,285 @@ export default function JobDetailPage() {
                   <span className="text-white/90 font-mono text-xs">
                     {truncateAddress(job.client)}
                   </span>
+                  {isClient && <span className="text-xs text-blue-400">(You)</span>}
                 </div>
               </div>
               
-              {job.freelancer !== "0x0000000000000000000000000000000000000000" && (
+              {job.freelancer !== "0x0000000000000000000000000000000000000000" ? (
                 <div>
-                   <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">Freelancer</span>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500/20 to-teal-500/20 border border-white/10 flex items-center justify-center">
-                        <User className="w-3 h-3 text-white/70" />
-                      </div>
-                      <span className="text-white text-sm">{job.freelancerGitHub}</span>
+                  <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">Freelancer</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500/20 to-teal-500/20 border border-white/10 flex items-center justify-center">
+                      <User className="w-3 h-3 text-white/70" />
                     </div>
+                    <span className="text-white/90 font-mono text-xs">
+                      {truncateAddress(job.freelancer)}
+                    </span>
+                    {isFreelancer && <span className="text-xs text-green-400">(You)</span>}
                   </div>
-                    <div className="mt-1.5 pl-7">
-                        <span className="text-white/40 font-mono text-xs block">
-                        {truncateAddress(job.freelancer)}
-                        </span>
-                    </div>
+                </div>
+              ) : (
+                <div className="text-white/50 text-sm italic">
+                  No freelancer assigned yet
                 </div>
               )}
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Dispute Warning */}
-          {(isClient || isFreelancer) && job.status >= 1 && job.status < 5 && (
-            <div className="card bg-orange-500/[0.05] border-orange-500/20">
-              <div className="flex items-start gap-4">
-                <AlertCircle className="w-4 h-4 text-orange-400/80 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-white/90 font-medium text-sm mb-1">Need help?</p>
-                  <p className="text-white/50 text-xs mb-3 leading-relaxed">
-                    If there's an issue with the work or payment, you can open a dispute.
+      {/* Submit Deliverable Modal */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-xl border border-white/10 max-w-lg w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-white">Submit Deliverable</h2>
+              <button 
+                onClick={() => setShowSubmitModal(false)}
+                className="text-white/50 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Demo Examples */}
+              <div>
+                <label className="block text-white/60 text-sm mb-2">
+                  Select example deliverable (for demo)
+                </label>
+                <div className="space-y-2">
+                  {DEMO_DELIVERABLES.map((item, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setDeliveryUrl(item.url)}
+                      className={`w-full text-left p-3 rounded-lg border transition-all ${
+                        deliveryUrl === item.url
+                          ? 'bg-orange-500/10 border-orange-500/30 text-white'
+                          : 'bg-white/[0.03] border-white/[0.08] text-white/70 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      <p className="font-medium text-sm">{item.name}</p>
+                      <p className="text-xs text-white/40 font-mono mt-1 truncate">{item.url}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center">
+                  <span className="bg-zinc-900 px-3 text-white/30 text-xs">or enter custom URL</span>
+                </div>
+                <div className="border-t border-white/10"></div>
+              </div>
+
+              <div>
+                <label className="block text-white/60 text-sm mb-2">
+                  Deliverable URL (IPFS or hosted)
+                </label>
+                <input
+                  type="text"
+                  value={deliveryUrl}
+                  onChange={(e) => setDeliveryUrl(e.target.value)}
+                  placeholder="ipfs://... or https://..."
+                  className="w-full px-4 py-3 bg-white/[0.05] border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
+                />
+              </div>
+              
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                <p className="text-blue-400 text-sm flex items-start gap-2">
+                  <Shield className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  Your submission will be verified via Flare Data Connector attestation.
+                </p>
+              </div>
+              
+              <button
+                onClick={handleSubmitDeliverable}
+                disabled={!deliveryUrl || isSubmitting}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    Submit for Review
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approve Modal */}
+      {showApproveModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-xl border border-white/10 max-w-lg w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-white">Approve & Release Payment</h2>
+              <button 
+                onClick={() => setShowApproveModal(false)}
+                className="text-white/50 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="bg-white/[0.05] rounded-lg p-4">
+                <p className="text-white/60 text-sm mb-2">Payment Amount</p>
+                <p className="text-2xl font-semibold text-white">{formatFLR(job.paymentAmount)}</p>
+              </div>
+              
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+                <p className="text-yellow-400 text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  This action is irreversible. The payment will be released to the freelancer.
+                </p>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowApproveModal(false)}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApproveWork}
+                  disabled={txStatus === "pending"}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                >
+                  {txStatus === "pending" ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      Approve & Pay
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FDC Progress Modal */}
+      {showFdcModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-xl border border-white/10 max-w-lg w-full p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center">
+                <Zap className="w-5 h-5 text-orange-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-white">Flare Data Connector</h2>
+                <p className="text-white/50 text-sm">Verifying delivery on-chain</p>
+              </div>
+            </div>
+
+            {/* Progress Steps */}
+            <div className="space-y-3 mb-6">
+              {[1, 2, 3, 4, 5].map((step) => (
+                <div key={step} className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all ${
+                    fdcStep > step 
+                      ? 'bg-green-500/20 text-green-400' 
+                      : fdcStep === step 
+                        ? 'bg-orange-500/20 text-orange-400 animate-pulse' 
+                        : 'bg-white/5 text-white/30'
+                  }`}>
+                    {fdcStep > step ? (
+                      <CheckCircle className="w-4 h-4" />
+                    ) : fdcStep === step ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      step
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-sm font-medium ${
+                      fdcStep >= step ? 'text-white' : 'text-white/40'
+                    }`}>
+                      {step === 1 && "Prepare Attestation Request"}
+                      {step === 2 && "Submit to FDC"}
+                      {step === 3 && "Wait for Consensus"}
+                      {step === 4 && "Fetch Attestation Proof"}
+                      {step === 5 && "Verify On-Chain"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Current Step Info */}
+            {fdcStep > 0 && fdcStep <= 5 && (
+              <div className="bg-black/30 rounded-lg p-4 mb-6">
+                <p className="text-orange-400 font-medium text-sm">{fdcStepTitle}</p>
+                <p className="text-white/60 text-xs mt-1">{fdcStepDescription}</p>
+              </div>
+            )}
+
+            {/* Success State */}
+            {txStatus === "success" && proofHash && (
+              <div className="space-y-4">
+                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle className="w-5 h-5 text-green-400" />
+                    <p className="text-green-400 font-medium">Attestation Verified!</p>
+                  </div>
+                  <p className="text-green-400/70 text-sm">
+                    Your delivery has been cryptographically verified on Flare.
                   </p>
-                  <button className="text-orange-400 hover:text-orange-300 text-xs font-medium hover:underline transition-colors">
-                    Open Dispute Case
+                </div>
+
+                <div className="space-y-2">
+                  <div className="bg-black/30 rounded-lg p-3">
+                    <p className="text-white/40 text-xs uppercase tracking-wider mb-1">Proof Hash</p>
+                    <p className="text-white font-mono text-xs break-all">{proofHash}</p>
+                  </div>
+                  <div className="bg-black/30 rounded-lg p-3">
+                    <p className="text-white/40 text-xs uppercase tracking-wider mb-1">Transaction Hash</p>
+                    <p className="text-white font-mono text-xs break-all">{txHash}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <a
+                    href={`${FLARE_LINKS.explorer}/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-secondary flex-1 flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View on Explorer
+                  </a>
+                  <button
+                    onClick={() => {
+                      setShowFdcModal(false);
+                      resetFdc();
+                      setProofHash(null);
+                      setTxHash(null);
+                      setTxStatus("idle");
+                    }}
+                    className="btn-primary flex-1"
+                  >
+                    Done
                   </button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

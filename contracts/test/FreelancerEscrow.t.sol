@@ -11,7 +11,7 @@ import "../src/mocks/MockFlareDataConnector.sol";
  */
 contract FreelancerEscrowTest is Test {
     FreelancerEscrow public escrow;
-    MockFlareDataConnector public mockFdc;
+    MockFlareSetup public mockSetup;
 
     address public client = address(0x1);
     address public freelancer = address(0x2);
@@ -33,8 +33,8 @@ contract FreelancerEscrowTest is Test {
 
     function setUp() public {
         // Deploy contracts
-        mockFdc = new MockFlareDataConnector();
-        escrow = new FreelancerEscrow(address(mockFdc), treasury);
+        mockSetup = new MockFlareSetup();
+        escrow = new FreelancerEscrow(address(mockSetup.registry()), treasury);
 
         // Fund accounts
         vm.deal(client, 10 ether);

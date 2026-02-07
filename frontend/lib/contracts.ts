@@ -183,7 +183,43 @@ export const FREELANCER_ESCROW_ABI = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "jobId", type: "bytes32" },
-      { name: "fdcProof", type: "bytes" },
+      {
+        name: "proof",
+        type: "tuple",
+        components: [
+          { name: "merkleProof", type: "bytes32[]" },
+          {
+            name: "data",
+            type: "tuple",
+            components: [
+              { name: "attestationType", type: "bytes32" },
+              { name: "sourceId", type: "bytes32" },
+              { name: "votingRound", type: "uint64" },
+              { name: "lowestUsedTimestamp", type: "uint64" },
+              {
+                name: "requestBody",
+                type: "tuple",
+                components: [
+                  { name: "url", type: "string" },
+                  { name: "httpMethod", type: "string" },
+                  { name: "headers", type: "string" },
+                  { name: "queryParams", type: "string" },
+                  { name: "body", type: "string" },
+                  { name: "postProcessJq", type: "string" },
+                  { name: "abiSignature", type: "string" },
+                ],
+              },
+              {
+                name: "responseBody",
+                type: "tuple",
+                components: [
+                  { name: "abiEncodedData", type: "bytes" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     ],
     outputs: [],
   },
@@ -207,7 +243,43 @@ export const FREELANCER_ESCROW_ABI = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "gitHubUsername", type: "string" },
-      { name: "fdcIdentityProof", type: "bytes" },
+      {
+        name: "proof",
+        type: "tuple",
+        components: [
+          { name: "merkleProof", type: "bytes32[]" },
+          {
+            name: "data",
+            type: "tuple",
+            components: [
+              { name: "attestationType", type: "bytes32" },
+              { name: "sourceId", type: "bytes32" },
+              { name: "votingRound", type: "uint64" },
+              { name: "lowestUsedTimestamp", type: "uint64" },
+              {
+                name: "requestBody",
+                type: "tuple",
+                components: [
+                  { name: "url", type: "string" },
+                  { name: "httpMethod", type: "string" },
+                  { name: "headers", type: "string" },
+                  { name: "queryParams", type: "string" },
+                  { name: "body", type: "string" },
+                  { name: "postProcessJq", type: "string" },
+                  { name: "abiSignature", type: "string" },
+                ],
+              },
+              {
+                name: "responseBody",
+                type: "tuple",
+                components: [
+                  { name: "abiEncodedData", type: "bytes" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     ],
     outputs: [],
   },
@@ -236,3 +308,27 @@ export const JOB_STATUS = {
 } as const;
 
 export type JobStatus = keyof typeof JOB_STATUS;
+
+// ═══════════════════════════════════════════════════════════
+//                    DEPLOYED CONTRACT ADDRESSES
+// ═══════════════════════════════════════════════════════════
+
+export const CONTRACT_ADDRESSES = {
+  // Coston2 Testnet (Chain ID: 114)
+  coston2: {
+    escrow: "0x3DF72131555649Cdb40c743605c622A50409e0fb" as `0x${string}`,
+    contractRegistry: "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019" as `0x${string}`,
+  },
+  // Flare Mainnet (Chain ID: 14) - Not yet deployed
+  flare: {
+    escrow: null,
+    contractRegistry: "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019" as `0x${string}`,
+  },
+} as const;
+
+// Get escrow address for current chain
+export function getEscrowAddress(chainId: number): `0x${string}` | null {
+  if (chainId === 114) return CONTRACT_ADDRESSES.coston2.escrow;
+  if (chainId === 14) return CONTRACT_ADDRESSES.flare.escrow;
+  return null;
+}

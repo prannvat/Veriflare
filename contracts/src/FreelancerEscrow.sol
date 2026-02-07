@@ -7,17 +7,27 @@ import "./interfaces/IFreelancerEscrow.sol";
 /**
  * @title FreelancerEscrow
  * @author Veriflare Team
- * @notice Trustless freelance escrow with "try before you buy" using Flare Data Connector
- * @dev Uses FDC to verify GitHub code delivery before releasing escrowed payments
+ * @notice Trustless freelance escrow with FDC-verified delivery on Flare Network
+ * @dev Uses Web2Json attestation type to verify deliverables via any Web2 API
+ *      (GitHub commits, IPFS hashes, live URLs, etc.)
  * 
- * Flow:
- * 1. Client creates job with payment in escrow
- * 2. Freelancer accepts job and links GitHub identity
- * 3. Freelancer uploads build (compiled/deployed preview)
- * 4. Client tests build and accepts (commits to sourceCodeHash)
- * 5. Freelancer pushes source code to client's repo
- * 6. FDC verifies commit exists, author matches, tree hash matches
- * 7. Payment released instantly to freelancer
+ * FDC Integration:
+ *   On Coston2/Flare, the ContractRegistry lives at 0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019
+ *   We use it to dynamically resolve FdcVerification at runtime.
+ *   This means we never hardcode FDC addresses — they auto-update.
+ *
+ * Verification flow:
+ *   1. Client creates job → FLR escrowed
+ *   2. Freelancer submits deliverable (hash + preview)
+ *   3. Client reviews & accepts deliverable
+ *   4. Freelancer delivers source/files to destination
+ *   5. Backend requests Web2Json attestation from FDC for the delivery
+ *      (e.g. GitHub API commit endpoint, IPFS gateway, etc.)
+ *   6. FDC data providers verify the API response, build Merkle tree
+ *   7. Freelancer calls claimPayment() with the Merkle proof
+ *   8. Contract verifies proof via FdcVerification.verifyWeb2Json()
+ *   9. Contract decodes attested data & checks it matches job params
+ *  10. Payment released
  */
 contract FreelancerEscrow is IFreelancerEscrow {
     // ═══════════════════════════════════════════════════════════
@@ -43,8 +53,9 @@ contract FreelancerEscrow is IFreelancerEscrow {
     //                      STATE VARIABLES
     // ═══════════════════════════════════════════════════════════
 
-    /// @notice Flare Data Connector contract
-    IFlareDataConnector public immutable fdc;
+    /// @notice Flare ContractRegistry — resolves FdcVerification, FdcHub, etc.
+    /// @dev Coston2 & Flare mainnet: 0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019
+    IFlareContractRegistry public immutable contractRegistry;
 
     /// @notice Platform fee recipient
     address public immutable treasury;
@@ -92,14 +103,15 @@ contract FreelancerEscrow is IFreelancerEscrow {
 
     /**
      * @notice Initialize the escrow contract
-     * @param _fdc Address of Flare Data Connector
+     * @param _contractRegistry Address of Flare ContractRegistry
+     *        (0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019 on Coston2/Flare)
      * @param _treasury Address to receive platform fees
      */
-    constructor(address _fdc, address _treasury) {
-        require(_fdc != address(0), "Invalid FDC address");
+    constructor(address _contractRegistry, address _treasury) {
+        require(_contractRegistry != address(0), "Invalid registry address");
         require(_treasury != address(0), "Invalid treasury address");
         
-        fdc = IFlareDataConnector(_fdc);
+        contractRegistry = IFlareContractRegistry(_contractRegistry);
         treasury = _treasury;
     }
 
@@ -270,80 +282,77 @@ contract FreelancerEscrow is IFreelancerEscrow {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * @notice Claim payment after code delivery (verified by FDC)
+     * @notice Claim payment after code delivery (verified by FDC Web2Json proof)
+     * @dev The proof must be a valid Web2Json attestation from the FDC network
+     *      containing a GitHub commit API response that matches job parameters
      * @param jobId The job ID
-     * @param fdcProof Encoded FDC attestation proof for GitHub commit
+     * @param proof Web2Json proof struct from the FDC DA Layer
      */
-    function claimPayment(bytes32 jobId, bytes calldata fdcProof) 
+    function claimPayment(bytes32 jobId, Web2JsonProof calldata proof) 
         external 
         onlyFreelancer(jobId) 
         inStatus(jobId, JobStatus.BuildAccepted) 
     {
         Job storage job = jobs[jobId];
 
-        // Decode and verify FDC proof
-        (
-            string memory repoFullName,
-            string memory commitHash,
-            bytes32 treeHash,
-            string memory authorGitHub,
-            uint256 commitTimestamp
-        ) = _verifyFDCProof(fdcProof);
+        // Step 1: Verify the Merkle proof against the on-chain Merkle root
+        //         via the official FdcVerification contract
+        IFdcVerification fdcVerification = IFdcVerification(
+            contractRegistry.getContractAddressByName("FdcVerification")
+        );
+        require(fdcVerification.verifyWeb2Json(proof), "FDC: invalid Web2Json proof");
 
-        // Verification checks
+        // Step 2: Verify the attestation type is Web2Json from PublicWeb2
         require(
-            keccak256(bytes(repoFullName)) == keccak256(bytes(job.clientRepo)),
+            proof.data.attestationType == bytes32("Web2Json"),
+            "Wrong attestation type"
+        );
+        require(
+            proof.data.sourceId == bytes32("PublicWeb2"),
+            "Wrong source ID"
+        );
+
+        // Step 3: Decode the attested API response data
+        GitHubCommitAttestation memory commit = abi.decode(
+            proof.data.responseBody.abiEncodedData,
+            (GitHubCommitAttestation)
+        );
+
+        // Step 4: Verify the commit matches the job parameters
+        require(
+            keccak256(bytes(commit.repoFullName)) == keccak256(bytes(job.clientRepo)),
             "Wrong repository"
         );
 
         require(
-            keccak256(bytes(authorGitHub)) == keccak256(bytes(job.freelancerGitHub)),
+            keccak256(bytes(commit.authorLogin)) == keccak256(bytes(job.freelancerGitHub)),
             "Wrong commit author"
         );
 
+        // Compare git tree hash against the accepted source hash
         require(
-            treeHash == job.acceptedSourceHash,
-            "Source code doesn't match accepted build"
+            keccak256(bytes(commit.treeHash)) == keccak256(abi.encodePacked(job.acceptedSourceHash)),
+            "Source code doesn't match accepted deliverable"
         );
 
         require(
-            commitTimestamp <= job.codeDeliveryDeadline,
+            commit.commitTimestamp <= job.codeDeliveryDeadline,
             "Delivered after deadline"
         );
 
-        // Update status
+        // Step 5: All checks passed — release payment
         job.status = JobStatus.Completed;
         totalValueLocked -= job.paymentAmount;
 
-        emit CodeDelivered(jobId, commitHash, treeHash);
+        emit CodeDelivered(jobId, commit.commitSha, job.acceptedSourceHash);
 
-        // Calculate and transfer payment
-        _releasePayment(job);
-    }
-
-    /**
-     * @notice Verify FDC proof and decode attestation data
-     */
-    function _verifyFDCProof(bytes calldata proof) internal view returns (
-        string memory repoFullName,
-        string memory commitHash,
-        bytes32 treeHash,
-        string memory authorGitHub,
-        uint256 commitTimestamp
-    ) {
-        // Verify proof with Flare Data Connector
-        require(fdc.verifyProof(proof), "Invalid FDC proof");
-
-        // Decode attestation data
-        // In production, this would use proper FDC attestation decoding
-        (repoFullName, commitHash, treeHash, authorGitHub, commitTimestamp) = 
-            abi.decode(proof, (string, string, bytes32, string, uint256));
+        _releasePayment(jobId, job);
     }
 
     /**
      * @notice Release payment to freelancer (minus platform fee)
      */
-    function _releasePayment(Job storage job) internal {
+    function _releasePayment(bytes32 jobId, Job storage job) internal {
         uint256 platformFee = (job.paymentAmount * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
         uint256 freelancerPayment = job.paymentAmount - platformFee;
 
@@ -355,7 +364,7 @@ contract FreelancerEscrow is IFreelancerEscrow {
         (bool successTreasury, ) = payable(treasury).call{value: platformFee}("");
         require(successTreasury, "Treasury payment failed");
 
-        emit PaymentReleased(job.freelancer, job.freelancer, freelancerPayment);
+        emit PaymentReleased(jobId, job.freelancer, freelancerPayment);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -364,26 +373,95 @@ contract FreelancerEscrow is IFreelancerEscrow {
 
     /**
      * @notice Link GitHub account to wallet address
-     * @dev Requires FDC proof that a gist exists with wallet signature
+     * @dev Requires a Web2Json FDC proof attesting a GitHub gist that contains
+     *      the caller's wallet address, proving they own the GitHub account
      * @param gitHubUsername The GitHub username to link
-     * @param fdcIdentityProof FDC proof of gist ownership
+     * @param proof Web2Json proof of gist ownership from the FDC DA Layer
      */
     function linkGitHub(
         string calldata gitHubUsername,
-        bytes calldata fdcIdentityProof
+        Web2JsonProof calldata proof
     ) external {
         require(bytes(gitHubUsername).length > 0, "Username required");
         require(bytes(walletToGitHub[msg.sender]).length == 0, "Already linked");
         require(gitHubToWallet[gitHubUsername] == address(0), "GitHub already linked");
 
-        // Verify FDC proof that gist contains wallet signature
-        require(fdc.verifyProof(fdcIdentityProof), "Invalid identity proof");
+        // Verify the Web2Json proof via FDC
+        IFdcVerification fdcVerification = IFdcVerification(
+            contractRegistry.getContractAddressByName("FdcVerification")
+        );
+        require(fdcVerification.verifyWeb2Json(proof), "FDC: invalid identity proof");
+
+        // Decode the attested gist data
+        GitHubGistAttestation memory gist = abi.decode(
+            proof.data.responseBody.abiEncodedData,
+            (GitHubGistAttestation)
+        );
+
+        // Verify the gist owner matches the claimed username
+        require(
+            keccak256(bytes(gist.ownerLogin)) == keccak256(bytes(gitHubUsername)),
+            "Gist owner doesn't match username"
+        );
+
+        // Verify the gist content contains the caller's wallet address
+        // (simple substring check — the gist must contain the hex address)
+        require(
+            _containsAddress(gist.content, msg.sender),
+            "Gist doesn't contain wallet address"
+        );
 
         // Store bidirectional mapping
         walletToGitHub[msg.sender] = gitHubUsername;
         gitHubToWallet[gitHubUsername] = msg.sender;
 
         emit GitHubLinked(msg.sender, gitHubUsername);
+    }
+
+    /**
+     * @notice Check if a string contains a hex address (case-insensitive)
+     * @dev Simple check — converts address to lowercase hex and searches
+     */
+    function _containsAddress(string memory haystack, address needle) internal pure returns (bool) {
+        bytes memory h = bytes(_toLower(haystack));
+        bytes memory n = bytes(_toLower(_toHexString(needle)));
+        
+        if (n.length > h.length) return false;
+        
+        for (uint i = 0; i <= h.length - n.length; i++) {
+            bool found = true;
+            for (uint j = 0; j < n.length; j++) {
+                if (h[i + j] != n[j]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) return true;
+        }
+        return false;
+    }
+
+    function _toLower(string memory s) internal pure returns (string memory) {
+        bytes memory b = bytes(s);
+        for (uint i = 0; i < b.length; i++) {
+            if (b[i] >= 0x41 && b[i] <= 0x5A) {
+                b[i] = bytes1(uint8(b[i]) + 32);
+            }
+        }
+        return string(b);
+    }
+
+    function _toHexString(address a) internal pure returns (string memory) {
+        bytes memory o = new bytes(42);
+        o[0] = "0";
+        o[1] = "x";
+        uint160 v = uint160(a);
+        for (uint i = 41; i > 1; i--) {
+            uint8 b = uint8(v & 0xf);
+            o[i] = b < 10 ? bytes1(b + 0x30) : bytes1(b + 0x57);
+            v >>= 4;
+        }
+        return string(o);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -432,7 +510,7 @@ contract FreelancerEscrow is IFreelancerEscrow {
         job.status = JobStatus.Completed;
         totalValueLocked -= job.paymentAmount;
 
-        _releasePayment(job);
+        _releasePayment(jobId, job);
     }
 
     /**

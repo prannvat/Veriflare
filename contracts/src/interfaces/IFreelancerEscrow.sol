@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+import "./IFlareDataConnector.sol";
+
 /**
  * @title IFreelancerEscrow
  * @notice Interface for the Veriflare Freelancer Escrow contract
@@ -153,7 +155,7 @@ interface IFreelancerEscrow {
 
     function requestChanges(bytes32 jobId, bytes32 newRequirementsHash) external;
 
-    function claimPayment(bytes32 jobId, bytes calldata fdcProof) external;
+    function claimPayment(bytes32 jobId, Web2JsonProof calldata proof) external;
 
     // Safety Mechanisms
     function refundClient(bytes32 jobId) external;
@@ -165,7 +167,7 @@ interface IFreelancerEscrow {
     // Identity
     function linkGitHub(
         string calldata gitHubUsername,
-        bytes calldata fdcIdentityProof
+        Web2JsonProof calldata proof
     ) external;
 
     // View Functions

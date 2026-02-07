@@ -1,53 +1,87 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-/**
- * @title IFlareDataConnector
- * @notice Interface for Flare Data Connector verification
- * @dev Used to verify attestations from external data sources (GitHub)
- */
-interface IFlareDataConnector {
-    /**
-     * @notice Verify a proof from the Flare Data Connector
-     * @param proof The encoded attestation proof
-     * @return valid Whether the proof is valid
-     */
-    function verifyProof(bytes calldata proof) external view returns (bool valid);
+// ═══════════════════════════════════════════════════════════════
+//   Real Flare protocol interfaces for FDC (Web2Json attestation)
+//   Reference: https://dev.flare.network/fdc/overview
+// ═══════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Verify a GitHub commit attestation
-     * @param attestationType The type of attestation
-     * @param sourceId The source identifier (e.g., "github")
-     * @param requestBody The encoded request body
-     * @param responseBody The encoded response body
-     * @return valid Whether the attestation is valid
-     */
-    function verifyAttestation(
-        bytes32 attestationType,
-        bytes32 sourceId,
-        bytes calldata requestBody,
-        bytes calldata responseBody
-    ) external view returns (bool valid);
+/**
+ * @title IFlareContractRegistry
+ * @notice Minimal interface for the Flare ContractRegistry
+ * @dev On Coston2/Flare, deployed at 0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019
+ */
+interface IFlareContractRegistry {
+    function getContractAddressByName(string calldata name) external view returns (address);
 }
 
 /**
- * @title IGitHubAttestation
- * @notice Decoded GitHub attestation structure
+ * @title IFdcVerification
+ * @notice Minimal interface for FDC Merkle proof verification
+ * @dev Obtained via ContractRegistry.getContractAddressByName("FdcVerification")
  */
-interface IGitHubAttestation {
-    struct CommitAttestation {
-        string repoFullName;      // "owner/repo"
-        string commitHash;        // SHA of the commit
-        bytes32 treeHash;         // Hash of all files in commit
-        string authorGitHubId;    // GitHub username of author
-        uint256 commitTimestamp;  // Unix timestamp of commit
-        string branch;            // Branch name
-    }
+interface IFdcVerification {
+    function verifyWeb2Json(Web2JsonProof calldata _proof) external view returns (bool);
+}
 
-    struct GistAttestation {
-        string gistId;            // Gist ID
-        string ownerGitHubId;     // GitHub username of gist owner
-        string content;           // Gist content (for signature verification)
-        uint256 createdAt;        // Unix timestamp
-    }
+/**
+ * @title IFdcHub
+ * @notice Minimal interface for submitting attestation requests
+ * @dev Obtained via ContractRegistry.getContractAddressByName("FdcHub")
+ */
+interface IFdcHub {
+    function requestAttestation(bytes calldata _data) external payable;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//       Web2Json attestation type structs (IWeb2Json.Proof)
+//       Matches @flarenetwork/flare-periphery-contracts
+// ═══════════════════════════════════════════════════════════════
+
+struct Web2JsonRequestBody {
+    string url;
+    string httpMethod;
+    string headers;
+    string queryParams;
+    string body;
+    string postProcessJq;
+    string abiSignature;
+}
+
+struct Web2JsonResponseBody {
+    bytes abiEncodedData;
+}
+
+struct Web2JsonData {
+    bytes32 attestationType;      // bytes32("Web2Json")
+    bytes32 sourceId;             // bytes32("PublicWeb2")
+    uint64 votingRound;
+    uint64 lowestUsedTimestamp;
+    Web2JsonRequestBody requestBody;
+    Web2JsonResponseBody responseBody;
+}
+
+struct Web2JsonProof {
+    bytes32[] merkleProof;
+    Web2JsonData data;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//   Decoded attestation payload structs
+//   (these are what we ABI-decode from Web2Json.responseBody.abiEncodedData)
+// ═══════════════════════════════════════════════════════════════
+
+/// @notice GitHub commit data returned by the GitHub API, attested via Web2Json
+struct GitHubCommitAttestation {
+    string repoFullName;      // "owner/repo"
+    string commitSha;         // SHA of the commit
+    string treeHash;          // Git tree hash (hex string)
+    string authorLogin;       // GitHub username of commit author
+    uint256 commitTimestamp;  // Unix timestamp of commit
+}
+
+/// @notice GitHub gist data for identity verification, attested via Web2Json
+struct GitHubGistAttestation {
+    string ownerLogin;        // GitHub username of gist owner
+    string content;           // Full gist content (contains wallet address)
 }

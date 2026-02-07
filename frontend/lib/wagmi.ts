@@ -1,11 +1,10 @@
-import { http, createConfig } from "wagmi";
-import { flare, flareTestnet } from "wagmi/chains";
-import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { createConfig, http } from "wagmi";
+import { injected, coinbaseWallet } from "wagmi/connectors";
 
-// Custom Coston2 testnet chain
+// Custom Coston2 testnet chain (primary for development)
 const coston2 = {
   id: 114,
-  name: "Coston2",
+  name: "Coston2 Testnet",
   nativeCurrency: {
     decimals: 18,
     name: "Coston2 Flare",
@@ -21,25 +20,48 @@ const coston2 = {
   testnet: true,
 } as const;
 
-export const config = getDefaultConfig({
-  appName: "Veriflare",
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
-  chains: [flare, coston2],
+// Flare mainnet (for production)
+const flareMainnet = {
+  id: 14,
+  name: "Flare",
+  nativeCurrency: {
+    decimals: 18,
+    name: "Flare",
+    symbol: "FLR",
+  },
+  rpcUrls: {
+    default: { http: ["https://flare-api.flare.network/ext/C/rpc"] },
+    public: { http: ["https://flare-api.flare.network/ext/C/rpc"] },
+  },
+  blockExplorers: {
+    default: { name: "Flare Explorer", url: "https://flare-explorer.flare.network" },
+  },
+  testnet: false,
+} as const;
+
+// Use only injected wallets (MetaMask, etc.) to avoid WalletConnect connection errors
+// Coston2 is first = default chain for development
+export const config = createConfig({
+  chains: [coston2, flareMainnet],
+  connectors: [
+    injected(),
+    coinbaseWallet({ appName: 'Veriflare' }),
+  ],
   transports: {
-    [flare.id]: http(),
     [coston2.id]: http(),
+    [flareMainnet.id]: http(),
   },
   ssr: true,
 });
 
 // Contract addresses per chain
 export const CONTRACT_ADDRESSES = {
-  [flare.id]: {
-    escrow: process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "",
-    fdc: "",
-  },
   [coston2.id]: {
     escrow: process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "",
-    fdc: "",
+    contractRegistry: "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019",
+  },
+  [flareMainnet.id]: {
+    escrow: process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || "",
+    contractRegistry: "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019",
   },
 } as const;

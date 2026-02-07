@@ -6,10 +6,14 @@ import { Github, Link as LinkIcon, CheckCircle, Loader2, AlertCircle, Globe, Pal
 import { FREELANCER_ESCROW_ABI } from "@/lib/contracts";
 import { CONTRACT_ADDRESSES } from "@/lib/wagmi";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002/api";
+
 export default function ProfilePage() {
   const { address, chain, isConnected } = useAccount();
   const [gitHubUsername, setGitHubUsername] = useState("");
-  const [verificationStep, setVerificationStep] = useState<"input" | "verify" | "complete">("input");
+  const [gistId, setGistId] = useState("");
+  const [verificationStep, setVerificationStep] = useState<"input" | "attesting" | "verify" | "complete">("input");
+  const [attestError, setAttestError] = useState<string | null>(null);
 
   const contractAddress = chain?.id
     ? CONTRACT_ADDRESSES[chain.id as keyof typeof CONTRACT_ADDRESSES]?.escrow
@@ -37,17 +41,39 @@ export default function ProfilePage() {
     ? `Veriflare Identity Verification\n\nWallet: ${address}\nTimestamp: ${Math.floor(Date.now() / 1000)}`
     : "";
 
-  const handleLinkGitHub = () => {
-    if (!contractAddress || !gitHubUsername) return;
+  const handleLinkGitHub = async () => {
+    if (!contractAddress || !gitHubUsername || !gistId) return;
 
-    // In production, this would use actual FDC proof
-    // For demo, we use empty proof (mock FDC accepts all)
-    writeContract({
-      address: contractAddress as `0x${string}`,
-      abi: FREELANCER_ESCROW_ABI,
-      functionName: "linkGitHub",
-      args: [gitHubUsername, "0x" as `0x${string}`],
-    });
+    setAttestError(null);
+    setVerificationStep("attesting");
+
+    try {
+      // Call backend to run the full FDC attestation pipeline for the gist
+      const resp = await fetch(`${API_BASE}/fdc/attest-gist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gistId }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || "Attestation failed");
+      }
+
+      const { proof } = await resp.json();
+
+      // Submit the FDC proof to the smart contract
+      setVerificationStep("verify");
+      writeContract({
+        address: contractAddress as `0x${string}`,
+        abi: FREELANCER_ESCROW_ABI,
+        functionName: "linkGitHub",
+        args: [gitHubUsername, proof],
+      });
+    } catch (err: any) {
+      setAttestError(err.message || "FDC attestation failed");
+      setVerificationStep("input");
+    }
   };
 
   if (!isConnected) {
@@ -180,6 +206,11 @@ export default function ProfilePage() {
                     />
                   </div>
                 </div>
+                {attestError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
+                    {attestError}
+                  </div>
+                )}
                 <button
                   onClick={() => setVerificationStep("verify")}
                   disabled={!gitHubUsername}
@@ -218,20 +249,37 @@ export default function ProfilePage() {
                 <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl relative">
                    <span className="absolute -top-3 left-4 bg-[#0a0a0a] px-2 text-xs text-white/40 uppercase tracking-widest border border-white/10 rounded">Step 2</span>
                   <h4 className="text-white font-medium mb-3 mt-1">
-                    On-Chain Verification
+                    Gist ID
                   </h4>
                   <p className="text-white/50 text-xs mb-4">
-                    Once the gist is created, submit the verification transaction to the Flare Data Connector.
+                    Paste the Gist ID from the URL (e.g. <span className="text-white/70 font-mono">gist.github.com/you/<span className="text-emerald-400/80">abc123</span></span>).
+                  </p>
+                  <input
+                    type="text"
+                    placeholder="Gist ID"
+                    className="input font-mono text-sm"
+                    value={gistId}
+                    onChange={(e) => setGistId(e.target.value)}
+                  />
+                </div>
+
+                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl relative">
+                   <span className="absolute -top-3 left-4 bg-[#0a0a0a] px-2 text-xs text-white/40 uppercase tracking-widest border border-white/10 rounded">Step 3</span>
+                  <h4 className="text-white font-medium mb-3 mt-1">
+                    FDC Verification
+                  </h4>
+                  <p className="text-white/50 text-xs mb-4">
+                    Submit the gist for attestation via the Flare Data Connector. This verifies your gist on-chain using a Web2Json Merkle proof.
                   </p>
                   <button
                     onClick={handleLinkGitHub}
-                    disabled={isPending || isConfirming}
+                    disabled={isPending || isConfirming || !gistId}
                     className="btn-primary w-full flex items-center justify-center gap-2 h-11"
                   >
                     {isPending || isConfirming ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        {isPending ? "Check Wallet..." : "Verifying..."}
+                        {isPending ? "Check Wallet..." : "Confirming..."}
                       </>
                     ) : (
                       <>
@@ -248,6 +296,18 @@ export default function ProfilePage() {
                 >
                   Cancel and go back
                 </button>
+              </div>
+            )}
+
+            {verificationStep === "attesting" && (
+              <div className="space-y-6">
+                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl text-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-400/60 mx-auto mb-4" />
+                  <h4 className="text-white font-medium mb-2">FDC Attestation in Progress</h4>
+                  <p className="text-white/50 text-xs leading-relaxed">
+                    The Flare Data Connector is verifying your gist. This typically takes 1–3 minutes as data providers reach consensus in the current voting round.
+                  </p>
+                </div>
               </div>
             )}
           </div>

@@ -79,6 +79,16 @@ interface AppState {
   jobs: Map<string, Job>;
   addJob: (job: Job) => void;
   updateJob: (id: string, updates: Partial<Job>) => void;
+  getJob: (id: string) => Job | undefined;
+
+  // Demo mode actions
+  acceptJob: (jobId: string, freelancerAddress: string) => void;
+  submitDeliverable: (jobId: string, deliveryUrl: string, deliveryHash: string) => void;
+  approveWork: (jobId: string) => void;
+  completePayment: (jobId: string) => void;
+
+  // Initialize demo jobs
+  initDemoJobs: () => void;
 
   // UI state
   isLoading: boolean;
@@ -87,6 +97,13 @@ interface AppState {
   // Selected job for detail view
   selectedJobId: string | null;
   setSelectedJobId: (id: string | null) => void;
+
+  // FDC attestation state
+  fdcStep: number;
+  fdcStepTitle: string;
+  fdcStepDescription: string;
+  setFdcProgress: (step: number, title: string, description: string) => void;
+  resetFdc: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -113,6 +130,133 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { jobs };
     }),
+  getJob: (id) => get().jobs.get(id),
+
+  // Demo mode actions
+  acceptJob: (jobId, freelancerAddress) =>
+    set((state) => {
+      const jobs = new Map(state.jobs);
+      const job = jobs.get(jobId);
+      if (job && job.status === 0) {
+        jobs.set(jobId, {
+          ...job,
+          freelancer: freelancerAddress,
+          freelancerGitHub: "demo-freelancer",
+          status: 2, // In Progress
+        });
+      }
+      return { jobs };
+    }),
+
+  submitDeliverable: (jobId, deliveryUrl, deliveryHash) =>
+    set((state) => {
+      const jobs = new Map(state.jobs);
+      const job = jobs.get(jobId);
+      if (job && (job.status === 1 || job.status === 2)) {
+        jobs.set(jobId, {
+          ...job,
+          clientRepo: deliveryUrl,
+          acceptedBuildHash: deliveryHash,
+          status: 3, // Submitted for Review
+        });
+      }
+      return { jobs };
+    }),
+
+  approveWork: (jobId) =>
+    set((state) => {
+      const jobs = new Map(state.jobs);
+      const job = jobs.get(jobId);
+      if (job && job.status === 3) {
+        jobs.set(jobId, {
+          ...job,
+          status: 4, // Approved
+        });
+      }
+      return { jobs };
+    }),
+
+  completePayment: (jobId) =>
+    set((state) => {
+      const jobs = new Map(state.jobs);
+      const job = jobs.get(jobId);
+      if (job && job.status === 4) {
+        jobs.set(jobId, {
+          ...job,
+          status: 5, // Completed
+        });
+      }
+      return { jobs };
+    }),
+
+  initDemoJobs: () =>
+    set(() => {
+      const jobs = new Map<string, Job>();
+      // Demo job 1 - Open
+      jobs.set("0x0001", {
+        id: "0x0001",
+        client: "0x1111111111111111111111111111111111111111",
+        freelancer: "0x0000000000000000000000000000000000000000",
+        freelancerGitHub: "",
+        paymentAmount: BigInt("5000000000000000000"),
+        paymentToken: "0x0000000000000000000000000000000000000000",
+        clientRepo: "ipfs://brand-identity",
+        targetBranch: "final",
+        requirementsHash: "0x...",
+        acceptedBuildHash: "",
+        acceptedSourceHash: "",
+        deadline: Math.floor(Date.now() / 1000) + 86400 * 14,
+        reviewPeriod: 86400 * 3,
+        codeDeliveryDeadline: 0,
+        status: 0,
+        category: "design",
+        title: "Brand Identity Package",
+        verificationType: "ipfs_delivery",
+      });
+      // Demo job 2 - Open
+      jobs.set("0x0002", {
+        id: "0x0002",
+        client: "0x2222222222222222222222222222222222222222",
+        freelancer: "0x0000000000000000000000000000000000000000",
+        freelancerGitHub: "",
+        paymentAmount: BigInt("10000000000000000000"),
+        paymentToken: "0x0000000000000000000000000000000000000000",
+        clientRepo: "https://github.com/client/project",
+        targetBranch: "main",
+        requirementsHash: "0x...",
+        acceptedBuildHash: "",
+        acceptedSourceHash: "",
+        deadline: Math.floor(Date.now() / 1000) + 86400 * 7,
+        reviewPeriod: 86400 * 2,
+        codeDeliveryDeadline: 0,
+        status: 0,
+        category: "development",
+        title: "Landing Page Development",
+        verificationType: "github_commit",
+      });
+      // Demo job 3 - Open
+      jobs.set("0x0003", {
+        id: "0x0003",
+        client: "0x3333333333333333333333333333333333333333",
+        freelancer: "0x0000000000000000000000000000000000000000",
+        freelancerGitHub: "",
+        paymentAmount: BigInt("3000000000000000000"),
+        paymentToken: "0x0000000000000000000000000000000000000000",
+        clientRepo: "ipfs://photo-gallery",
+        targetBranch: "v1",
+        requirementsHash: "0x...",
+        acceptedBuildHash: "",
+        acceptedSourceHash: "",
+        deadline: Math.floor(Date.now() / 1000) + 86400 * 5,
+        reviewPeriod: 86400,
+        codeDeliveryDeadline: 0,
+        status: 0,
+        category: "photography",
+        title: "Product Photography Session",
+        verificationType: "ipfs_delivery",
+      });
+      return { jobs };
+    }),
 
   // UI state
   isLoading: false,
@@ -121,4 +265,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Selected job
   selectedJobId: null,
   setSelectedJobId: (id) => set({ selectedJobId: id }),
+
+  // FDC attestation progress
+  fdcStep: 0,
+  fdcStepTitle: "",
+  fdcStepDescription: "",
+  setFdcProgress: (step, title, description) =>
+    set({ fdcStep: step, fdcStepTitle: title, fdcStepDescription: description }),
+  resetFdc: () =>
+    set({ fdcStep: 0, fdcStepTitle: "", fdcStepDescription: "" }),
 }));

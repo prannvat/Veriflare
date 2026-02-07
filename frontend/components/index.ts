@@ -4,3 +4,4 @@ export { StatusBadge } from "./StatusBadge";
 export { JobCard } from "./JobCard";
 export { CreateJobModal } from "./CreateJobModal";
 export { BuildPreview } from "./BuildPreview";
+export { ConnectButton } from "./ConnectButton";

@@ -1,6 +1,6 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { ConnectButton } from "./ConnectButton";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Flame, Briefcase, User, LayoutDashboard } from "lucide-react";
@@ -52,15 +52,8 @@ export function Header() {
           </nav>
 
           {/* Wallet Connect */}
-          <div className="flex items-center gap-4 [&_button]:!font-medium [&_button]:!rounded-lg">
-            <ConnectButton
-              chainStatus="icon"
-              showBalance={false}
-              accountStatus={{
-                smallScreen: "avatar",
-                largeScreen: "avatar",
-              }}
-            />
+          <div className="flex items-center gap-4">
+            <ConnectButton />
           </div>
         </div>
       </div>

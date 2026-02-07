@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Job, JOB_CATEGORIES } from "@/lib/store";
 import { StatusBadge } from "./StatusBadge";
@@ -17,9 +18,20 @@ interface JobCardProps {
 }
 
 export function JobCard({ job, userRole = "viewer" }: JobCardProps) {
+  const [mounted, setMounted] = useState(false);
+  
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const isOpen = job.status === 0;
-  const isPastDeadline = job.deadline < Math.floor(Date.now() / 1000);
+  const isPastDeadline = mounted ? job.deadline < Math.floor(Date.now() / 1000) : false;
   const category = JOB_CATEGORIES.find(c => c.value === job.category);
+  
+  // Avoid hydration mismatch by showing placeholder until client mounts
+  const timeDisplay = mounted 
+    ? (isOpen ? formatTimeRemaining(job.deadline) : isPastDeadline ? "Expired" : formatTimeRemaining(job.deadline))
+    : "--";
 
   return (
     <Link href={`/jobs/${job.id}`}>
@@ -68,11 +80,7 @@ export function JobCard({ job, userRole = "viewer" }: JobCardProps) {
             <div className="flex items-center gap-2 text-white/50 text-sm">
               <Clock className="w-3.5 h-3.5" />
               <span className={isPastDeadline && isOpen ? "text-red-400" : ""}>
-                {isOpen
-                  ? formatTimeRemaining(job.deadline)
-                  : isPastDeadline
-                  ? "Expired"
-                  : formatTimeRemaining(job.deadline)}
+                {timeDisplay}
               </span>
             </div>
           </div>
