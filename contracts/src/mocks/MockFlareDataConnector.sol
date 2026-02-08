@@ -91,15 +91,12 @@ library MockProofBuilder {
         string memory repoFullName,
         string memory commitSha,
         string memory treeHash,
-        string memory authorLogin,
-        uint256 commitTimestamp
+        string memory authorLogin
     ) internal pure returns (Web2JsonProof memory proof) {
         GitHubCommitAttestation memory commit = GitHubCommitAttestation({
-            repoFullName: repoFullName,
             commitSha: commitSha,
             treeHash: treeHash,
-            authorLogin: authorLogin,
-            commitTimestamp: commitTimestamp
+            authorLogin: authorLogin
         });
 
         proof.merkleProof = new bytes32[](0);
@@ -107,6 +104,9 @@ library MockProofBuilder {
         proof.data.sourceId = bytes32("PublicWeb2");
         proof.data.votingRound = 0;
         proof.data.lowestUsedTimestamp = 0;
+        proof.data.requestBody.url = string(
+            abi.encodePacked("https://api.github.com/repos/", repoFullName, "/commits/", commitSha)
+        );
         proof.data.responseBody.abiEncodedData = abi.encode(commit);
     }
 

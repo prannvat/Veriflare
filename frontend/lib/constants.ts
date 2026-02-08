@@ -40,7 +40,7 @@ export const JOB_STATUS_COLORS: Record<number, string> = {
 };
 
 /** The deployed contract address on Coston2 testnet */
-export const ESCROW_ADDRESS = "0x3DF72131555649Cdb40c743605c622A50409e0fb" as const;
+export const ESCROW_ADDRESS = "0xebd58418c784a240C7dC45cF8a8bD41dE5d35F9F" as const;
 
 /** Coston2 chain id */
 export const COSTON2_CHAIN_ID = 114;

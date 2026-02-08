@@ -7,6 +7,8 @@ import { jobRoutes } from "./routes/jobs";
 import { fdcRoutes } from "./routes/fdc";
 import { githubRoutes } from "./routes/github";
 import { authRoutes } from "./routes/auth";
+import { githubCacheRoutes } from "./routes/github-cache";
+import { startTunnel } from "./tunnel";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -27,6 +29,7 @@ app.use("/api/jobs", jobRoutes);
 app.use("/api/fdc", fdcRoutes);
 app.use("/api/github", githubRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/github-cache", githubCacheRoutes);
 
 // Error handler
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -72,6 +75,23 @@ app.listen(PORT, () => {
     console.warn("   1. Generate a wallet: node -e \"console.log(require('ethers').Wallet.createRandom().privateKey)\"");
     console.warn("   2. Fund it with C2FLR: https://faucet.flare.network/coston2");
     console.warn("   3. Add the private key to backend/.env\n");
+  }
+
+  // Auto-start Cloudflare tunnel for FDC GitHub proxy
+  if (!process.env.PUBLIC_BACKEND_URL) {
+    startTunnel(Number(PORT));
+  } else {
+    console.log(`\n🌐 Using PUBLIC_BACKEND_URL from .env: ${process.env.PUBLIC_BACKEND_URL}`);
+    // Auto-register the URL with the FDC service
+    setTimeout(async () => {
+      try {
+        await fetch(`http://localhost:${PORT}/api/fdc/set-public-url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: process.env.PUBLIC_BACKEND_URL }),
+        });
+      } catch {}
+    }, 500);
   }
 });
 

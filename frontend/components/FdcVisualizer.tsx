@@ -11,7 +11,8 @@ import {
   GitCommit,
   FileCheck,
   Vote,
-  Lock
+  Lock,
+  DollarSign,
 } from "lucide-react";
 import { FdcProgress, FDC_STEPS } from "@/lib/fdc";
 import { FLARE_LINKS } from "@/lib/demo-data";
@@ -36,6 +37,7 @@ const STEP_ICONS = [
   <Vote key="3" className="w-5 h-5" />,
   <Database key="4" className="w-5 h-5" />,
   <Lock key="5" className="w-5 h-5" />,
+  <DollarSign key="6" className="w-5 h-5" />,
 ];
 
 export function FdcVisualizer({ isOpen, onClose, progress, result, title = "FDC Attestation" }: FdcVisualizerProps) {

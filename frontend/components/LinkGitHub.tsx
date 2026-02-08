@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { GitBranch, ExternalLink, Loader2, CheckCircle, AlertCircle, Shield, X } from "lucide-react";
 import { FREELANCER_ESCROW_ABI } from "@/lib/contracts";
 import { ESCROW_ADDRESS, EXPLORER_URL } from "@/lib/constants";
-import { fdc, FdcProgress, FDC_STEPS } from "@/lib/fdc";
 import { useAppStore } from "@/lib/store";
 
 interface LinkGitHubProps {
@@ -35,42 +34,64 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
     query: { enabled: !!address },
   });
 
-  // Contract write
+  // Contract write for linkGitHubDirect
   const {
-    writeContract: writeLinkGitHub,
+    writeContractAsync: writeLinkGitHubAsync,
     data: linkTxHash,
     isPending: isLinkPending,
     error: linkError,
+    reset: resetLinkState,
   } = useWriteContract();
 
   const { isLoading: isLinkConfirming, isSuccess: isLinkSuccess } =
     useWaitForTransactionReceipt({ hash: linkTxHash });
 
   // Local state
-  const [step, setStep] = useState<"input" | "connecting" | "attesting" | "submitting" | "done">("input");
+  const [step, setStep] = useState<"input" | "connecting" | "submitting" | "done">("input");
   const [githubUsername, setGithubUsername] = useState("");
-  const [gistId, setGistId] = useState("");
-  const [fdcProgress, setFdcProgress] = useState<FdcProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pendingLinkRef = useRef<{ username: string; signature: string } | null>(null);
 
-  // Check URL for OAuth callback params
+  // Check URL for OAuth callback params (signature + username from backend)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const params = new URLSearchParams(window.location.search);
-    const callbackGistId = params.get("gistId");
+    const callbackSignature = params.get("signature");
     const callbackUsername = params.get("username");
+    const authError = params.get("authError");
 
-    if (callbackGistId && callbackUsername && address) {
-      setGistId(callbackGistId);
+    if (authError) {
+      setError(decodeURIComponent(authError));
+      setStep("input");
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+
+    if (callbackSignature && callbackUsername) {
       setGithubUsername(callbackUsername);
-      setStep("connecting");
 
-      // Clean URL
+      // Clean URL immediately so refreshes don't re-trigger
       window.history.replaceState({}, "", window.location.pathname);
 
-      // Auto-start attestation
-      runAttestation(callbackGistId, callbackUsername);
+      if (address) {
+        // Wallet connected — submit now
+        submitToContract(callbackUsername, callbackSignature);
+      } else {
+        // Wallet not connected yet — store params for when it connects
+        pendingLinkRef.current = { username: callbackUsername, signature: callbackSignature };
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // If wallet connects after OAuth redirect, submit the stored params
+  useEffect(() => {
+    if (address && pendingLinkRef.current) {
+      const { username, signature } = pendingLinkRef.current;
+      pendingLinkRef.current = null;
+      setGithubUsername(username);
+      submitToContract(username, signature);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
@@ -102,7 +123,9 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
 
   useEffect(() => {
     if (linkError) {
-      setError(`Transaction failed: ${linkError.message}`);
+      console.error("[LinkGitHub] Contract error:", linkError);
+      const reason = (linkError as any)?.shortMessage || (linkError as any)?.message || "Transaction failed";
+      setError(reason);
       setStep("input");
     }
   }, [linkError]);
@@ -119,7 +142,10 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
       const response = await fetch("http://localhost:3002/api/auth/github/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: address }),
+        body: JSON.stringify({
+          walletAddress: address,
+          returnUrl: window.location.pathname + window.location.search,
+        }),
       });
 
       if (!response.ok) {
@@ -135,57 +161,31 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
     }
   };
 
-  const runAttestation = async (gId: string, uname: string) => {
-    if (!gId || !address) return;
+  const submitToContract = async (username: string, signature: string) => {
+    if (!address) {
+      setError("Wallet not connected. Please connect your wallet and try again.");
+      setStep("input");
+      return;
+    }
 
-    setStep("attesting");
+    setStep("submitting");
     setError(null);
-    setFdcProgress(null);
+    resetLinkState();
+
+    console.log("[LinkGitHub] Calling linkGitHubDirect:", { username, signature: signature.slice(0, 20) + "...", wallet: address, contract: ESCROW_ADDRESS });
 
     try {
-      const result = await fdc.attestGist(gId, setFdcProgress);
-
-      if (!result.success || !result.proof) {
-        throw new Error(result.error || "FDC attestation failed — no proof returned");
-      }
-
-      setStep("submitting");
-
-      writeLinkGitHub({
+      const txHash = await writeLinkGitHubAsync({
         address: ESCROW_ADDRESS,
         abi: FREELANCER_ESCROW_ABI,
-        functionName: "linkGitHub",
-        args: [
-          uname,
-          {
-            merkleProof: (result.proof.merkleProof || []) as `0x${string}`[],
-            data: {
-              attestationType: (result.proof.data?.attestationType ||
-                "0x" + "0".repeat(64)) as `0x${string}`,
-              sourceId: (result.proof.data?.sourceId ||
-                "0x" + "0".repeat(64)) as `0x${string}`,
-              votingRound: BigInt(result.proof.data?.votingRound || 0),
-              lowestUsedTimestamp: BigInt(result.proof.data?.lowestUsedTimestamp || 0),
-              requestBody: {
-                url: result.proof.data?.requestBody?.url || "",
-                httpMethod: result.proof.data?.requestBody?.httpMethod || "GET",
-                headers: result.proof.data?.requestBody?.headers || "",
-                queryParams: result.proof.data?.requestBody?.queryParams || "",
-                body: result.proof.data?.requestBody?.body || "",
-                postProcessJq: result.proof.data?.requestBody?.postProcessJq || "",
-                abiSignature: result.proof.data?.requestBody?.abiSignature || "",
-              },
-              responseBody: {
-                abiEncodedData: (result.proof.data?.responseBody?.abiEncodedData ||
-                  "0x") as `0x${string}`,
-              },
-            },
-          },
-        ],
+        functionName: "linkGitHubDirect",
+        args: [username, signature as `0x${string}`],
       });
+      console.log("[LinkGitHub] Tx submitted:", txHash);
     } catch (err: any) {
-      console.error("GitHub linking error:", err);
-      setError(err.message || "Failed to link GitHub");
+      console.error("[LinkGitHub] Contract call failed:", err);
+      const reason = err?.shortMessage || err?.message || "Transaction failed";
+      setError(reason);
       setStep("input");
     }
   };
@@ -256,8 +256,8 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
           <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
             <p className="text-purple-400 text-sm font-medium mb-2">One-Click Verification</p>
             <p className="text-white/50 text-xs">
-              Click below to authorize via GitHub OAuth. We&apos;ll automatically create a
-              verification gist and link your identity using Flare&apos;s FDC.
+              Click below to sign in with GitHub. Your identity will be verified via OAuth
+              and linked on-chain to your wallet.
             </p>
           </div>
 
@@ -289,72 +289,29 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
         </div>
       )}
 
-      {/* Step 3: FDC attestation in progress */}
-      {step === "attesting" && (
-        <div className="space-y-4">
-          <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
-            <p className="text-purple-400 text-sm font-medium mb-3">FDC Attestation in Progress</p>
-            <div className="space-y-2">
-              {FDC_STEPS.map((s) => {
-                const isActive =
-                  fdcProgress?.step === s.step && fdcProgress?.status === "active";
-                const isComplete =
-                  (fdcProgress && fdcProgress.step > s.step) ||
-                  (fdcProgress?.step === s.step && fdcProgress?.status === "complete");
-
-                return (
-                  <div key={s.step} className="flex items-center gap-3">
-                    <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                        isComplete
-                          ? "bg-green-500/20 text-green-400"
-                          : isActive
-                          ? "bg-purple-500/20 text-purple-400"
-                          : "bg-white/5 text-white/30"
-                      }`}
-                    >
-                      {isComplete ? (
-                        "✓"
-                      ) : isActive ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        s.step
-                      )}
-                    </div>
-                    <span
-                      className={`text-xs ${
-                        isComplete
-                          ? "text-green-400"
-                          : isActive
-                          ? "text-purple-400"
-                          : "text-white/30"
-                      }`}
-                    >
-                      {s.title}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <p className="text-white/30 text-xs text-center">
-            This takes ~2-3 minutes while FDC providers reach consensus...
-          </p>
-        </div>
-      )}
-
-      {/* Step 4: Submitting to contract */}
+      {/* Step 3: Submitting to contract */}
       {step === "submitting" && (
         <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 text-center">
           <Loader2 className="w-8 h-8 text-orange-400 animate-spin mx-auto mb-3" />
-          <p className="text-orange-400 font-medium">Submitting to Contract</p>
+          <p className="text-orange-400 font-medium">Linking Identity On-Chain</p>
           <p className="text-white/40 text-xs mt-1">
             {isLinkPending
-              ? "Confirm the transaction in your wallet..."
+              ? "Check your wallet extension — a transaction approval popup should appear."
               : isLinkConfirming
-              ? "Waiting for confirmation..."
-              : "Processing..."}
+              ? "Transaction submitted! Waiting for on-chain confirmation..."
+              : "Preparing transaction..."}
           </p>
+          {isLinkPending && (
+            <p className="text-white/30 text-[10px] mt-3">
+              Don&apos;t see a wallet popup? Click the MetaMask extension icon in your browser toolbar.
+            </p>
+          )}
+          <button
+            onClick={() => { setStep("input"); setError(null); }}
+            className="mt-4 text-white/30 hover:text-white/60 text-xs underline"
+          >
+            Cancel &amp; go back
+          </button>
         </div>
       )}
 
@@ -363,9 +320,9 @@ export function LinkGitHub({ onLinked, onClose, isModal = false }: LinkGitHubPro
         <div className="p-4 rounded-xl bg-white/5 border border-white/10">
           <p className="text-white/40 text-xs font-medium mb-2">How it works</p>
           <ol className="space-y-1 text-white/30 text-xs">
-            <li>1. OAuth authorizes us to create a gist with your wallet address</li>
-            <li>2. FDC&apos;s Web2Json attestation verifies the gist ownership</li>
-            <li>3. The smart contract verifies the FDC proof and maps your wallet → GitHub</li>
+            <li>1. GitHub OAuth verifies you own the account</li>
+            <li>2. Our backend signs a cryptographic attestation of your identity</li>
+            <li>3. The smart contract verifies the signature and maps your wallet to GitHub</li>
             <li>
               4. This enables the contract to verify your commit authorship when claiming
               payment

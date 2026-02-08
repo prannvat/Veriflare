@@ -137,6 +137,8 @@ export default function JobDetailPage() {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [commitSha, setCommitSha] = useState("");
+  const [recentCommits, setRecentCommits] = useState<{ sha: string; message: string; date: string }[]>([]);
+  const [loadingCommits, setLoadingCommits] = useState(false);
   const [showFdcModal, setShowFdcModal] = useState(false);
   const [showLinkGitHubModal, setShowLinkGitHubModal] = useState(false);
   const [txStatus, setTxStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
@@ -202,10 +204,21 @@ export default function JobDetailPage() {
       storeCompletePayment(jobId);
       setLastTxHash(claimTxHash);
       setTxStatus("success");
-      setShowFdcModal(false);
+      // Show success in the FDC modal with final step complete
+      setFdcProgress({ step: 6, title: "Claim Payment", description: "Payment released!", status: 'complete' });
+      setFdcResult({ success: true, txHash: claimTxHash, proofHash: proofHash || undefined, votingRound: votingRound || undefined });
       refetchOnChainJob();
     }
   }, [isClaimSuccess, claimTxHash]);
+
+  // Update FDC Step 6 description based on claim tx state
+  useEffect(() => {
+    if (isClaimPending) {
+      setFdcProgress({ step: 6, title: "Claim Payment", description: "Confirm transaction in your wallet...", status: 'active' });
+    } else if (isClaimConfirming && claimTxHash) {
+      setFdcProgress({ step: 6, title: "Claim Payment", description: `Transaction sent! Confirming ${claimTxHash.slice(0, 10)}...`, status: 'active' });
+    }
+  }, [isClaimPending, isClaimConfirming, claimTxHash]);
 
   // ===== Handle contract errors =====
   useEffect(() => {
@@ -224,6 +237,9 @@ export default function JobDetailPage() {
     if (claimError) {
       console.error("Claim payment error:", claimError);
       setTxStatus("error");
+      // Show the contract revert reason in the FDC modal
+      const reason = (claimError as any)?.shortMessage || (claimError as any)?.message || "Transaction failed";
+      setFdcResult({ success: false, error: `On-chain claim failed: ${reason}` });
     }
   }, [acceptError, submitError, approveError, claimError]);
 
@@ -290,6 +306,37 @@ export default function JobDetailPage() {
 
   const category = JOB_CATEGORIES.find(c => c.value === job.category);
   const verification = VERIFICATION_TYPES.find(v => v.value === job.verificationType);
+
+  // ==================== HELPERS ====================
+
+  const fetchRecentCommits = async () => {
+    if (!job.clientRepo) return;
+    setLoadingCommits(true);
+    try {
+      const resp = await fetch(
+        `https://api.github.com/repos/${job.clientRepo}/commits?per_page=5${job.targetBranch ? `&sha=${job.targetBranch}` : ""}`,
+        { headers: { "User-Agent": "Veriflare-Frontend" } }
+      );
+      if (!resp.ok) {
+        console.error("Failed to fetch commits:", resp.status);
+        setRecentCommits([]);
+        return;
+      }
+      const data = await resp.json();
+      setRecentCommits(
+        data.map((c: any) => ({
+          sha: c.sha,
+          message: c.commit?.message?.split("\n")[0]?.slice(0, 60) || "No message",
+          date: new Date(c.commit?.committer?.date || Date.now()).toLocaleDateString(),
+        }))
+      );
+    } catch (err) {
+      console.error("Failed to fetch commits:", err);
+      setRecentCommits([]);
+    } finally {
+      setLoadingCommits(false);
+    }
+  };
 
   // ==================== ACTIONS ====================
 
@@ -494,16 +541,23 @@ export default function JobDetailPage() {
         // Run real FDC attestation through backend
         if (sha && repoName) {
           result = await fdc.attestCommit(repoName, sha, setFdcProgress);
+        } else if (sha || job.verificationType === "github_commit") {
+          // github_commit jobs MUST have a commit SHA — should never reach here
+          setFdcResult({ success: false, error: "Commit SHA is required for GitHub commit verification. Please enter a valid commit SHA." });
+          setTxStatus("error");
+          return;
         } else {
-          result = await fdc.attestUrl(job.clientRepo, setFdcProgress);
+          // Non-github jobs: attestUrl needs a proper URL
+          const url = repoName.startsWith("http") ? repoName : `https://github.com/${repoName}`;
+          result = await fdc.attestUrl(url, setFdcProgress);
         }
 
-        setFdcResult(result);
-
         if (result.success && result.proof) {
-          // We have a real FDC proof — call claimPayment on-chain
+          // FDC proof obtained — now show Step 6 (on-chain claim)
           setProofHash(result.proofHash || null);
           setVotingRound(result.votingRound || null);
+          // Don't set fdcResult as success yet — wait for on-chain tx
+          setFdcProgress({ step: 6, title: "Claim Payment", description: "Confirm transaction in your wallet...", status: 'active' });
 
           writeClaimPayment({
             address: ESCROW_ADDRESS,
@@ -536,6 +590,7 @@ export default function JobDetailPage() {
           });
         } else {
           // FDC attestation failed — show error
+          setFdcResult(result);
           setTxStatus("error");
         }
       } catch (error) {
@@ -554,6 +609,18 @@ export default function JobDetailPage() {
                       txStatus === "pending";
 
   // ==================== RENDER ====================
+
+  if (!mounted) {
+    return (
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-12 py-16">
+        <div className="animate-pulse space-y-6">
+          <div className="h-4 w-32 bg-white/10 rounded" />
+          <div className="h-8 w-64 bg-white/10 rounded" />
+          <div className="h-64 bg-white/5 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-12 py-16">
@@ -865,16 +932,26 @@ export default function JobDetailPage() {
             </div>
           )}
 
-          {/* Action Card for Freelancer - Push Code to Repo (after client approval) */}
+          {/* Action Card for Freelancer - Claim Payment (after client approval) */}
           {isFreelancer && canClaim && (
             <div className="card border-purple-500/20 bg-purple-500/5">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
-                  <GitCommit className="w-5 h-5 text-purple-400" />
+                  {job.verificationType === "github_commit" ? (
+                    <GitCommit className="w-5 h-5 text-purple-400" />
+                  ) : (
+                    <DollarSign className="w-5 h-5 text-purple-400" />
+                  )}
                 </div>
                 <div>
-                  <h3 className="text-lg font-medium text-white">Push Code & Claim Payment</h3>
-                  <p className="text-white/50 text-sm">Client approved your build — now deliver the source code</p>
+                  <h3 className="text-lg font-medium text-white">
+                    {job.verificationType === "github_commit" ? "Push Code & Claim Payment" : "Claim Payment"}
+                  </h3>
+                  <p className="text-white/50 text-sm">
+                    {job.verificationType === "github_commit"
+                      ? "Client approved your build — push source code to claim"
+                      : "Client approved your work — claim your payment now"}
+                  </p>
                 </div>
               </div>
 
@@ -899,12 +976,13 @@ export default function JobDetailPage() {
                     </span>
                   </div>
                   <p className="text-white/40 text-xs mt-1">
-                    You have 24 hours from client approval to push your code and claim payment.
+                    You have 24 hours from client approval to deliver and claim payment.
                   </p>
                 </div>
               )}
 
-              {/* 3-Step Flow */}
+              {/* GitHub Commit flow — 3-step push + SHA + claim */}
+              {job.verificationType === "github_commit" && (
               <div className="mb-5 space-y-3">
                 {/* Step A: Push */}
                 <div className="flex gap-3 items-start">
@@ -913,21 +991,24 @@ export default function JobDetailPage() {
                   </div>
                   <div className="flex-1">
                     <p className="text-white text-sm font-medium">Push your code to the client&apos;s repo</p>
-                    <div className="mt-2 p-3 bg-black/40 rounded-lg flex items-center gap-3">
-                      <GitBranch className="w-4 h-4 text-purple-400 flex-shrink-0" />
-                      <div>
-                        <a
-                          href={`https://github.com/${job.clientRepo}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-white font-mono text-sm hover:text-purple-400 transition-colors"
-                        >
-                          {job.clientRepo}
-                          <ExternalLink className="w-3 h-3 inline ml-1 opacity-50" />
-                        </a>
-                        {job.targetBranch && (
-                          <p className="text-white/40 text-xs mt-0.5">Branch: <span className="text-white/70 font-mono">{job.targetBranch}</span></p>
-                        )}
+                    <div className="mt-2 p-3 bg-black/40 rounded-lg">
+                      <p className="text-white/40 text-[10px] uppercase tracking-wider mb-1.5">Client-specified target repository</p>
+                      <div className="flex items-center gap-3">
+                        <GitBranch className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                        <div>
+                          <a
+                            href={`https://github.com/${job.clientRepo}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-white font-mono text-sm hover:text-purple-400 transition-colors"
+                          >
+                            {job.clientRepo}
+                            <ExternalLink className="w-3 h-3 inline ml-1 opacity-50" />
+                          </a>
+                          {job.targetBranch && (
+                            <p className="text-white/40 text-xs mt-0.5">Branch: <span className="text-white/70 font-mono">{job.targetBranch}</span></p>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="mt-2 p-3 bg-black/30 rounded-lg font-mono text-xs text-white/60 space-y-1">
@@ -967,9 +1048,21 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               </div>
+              )}
+
+              {/* Non-GitHub verification types — simple claim */}
+              {job.verificationType !== "github_commit" && (
+                <div className="mb-5 p-4 bg-black/30 rounded-xl">
+                  <p className="text-white/60 text-sm">
+                    {job.verificationType === "manual_review"
+                      ? "The client has signed off on your work. Click below to claim your payment."
+                      : "Your deliverable has been approved. Click below to trigger FDC verification and claim your payment."}
+                  </p>
+                </div>
+              )}
 
               <button
-                onClick={() => setShowClaimModal(true)}
+                onClick={() => job.verificationType === "github_commit" ? setShowClaimModal(true) : handleClaimPayment()}
                 disabled={isTxPending}
                 className="btn-primary w-full flex items-center justify-center gap-2"
               >
@@ -993,7 +1086,15 @@ export default function JobDetailPage() {
 
               {/* Delivery Target */}
               <div className="p-4 bg-black/30 rounded-xl">
-                <p className="text-white/40 text-xs uppercase tracking-wider mb-2">Delivery Target</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-white/40 text-xs uppercase tracking-wider">
+                    {job.verificationType === "github_commit" ? "Target Repository" :
+                     job.verificationType === "ipfs_delivery" ? "IPFS Destination" :
+                     job.verificationType === "url_live" ? "Target URL" :
+                     "Delivery Target"}
+                  </p>
+                  <span className="text-white/20 text-[10px]">Set by client</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <GitBranch className="w-4 h-4 text-white/40" />
                   <span className="text-white text-sm font-mono">{job.clientRepo || "—"}</span>
@@ -1001,7 +1102,9 @@ export default function JobDetailPage() {
                 {job.targetBranch && (
                   <div className="flex items-center gap-2 mt-1.5">
                     <GitCommit className="w-4 h-4 text-white/40" />
-                    <span className="text-white/80 text-sm font-mono">Branch: {job.targetBranch}</span>
+                    <span className="text-white/80 text-sm font-mono">
+                      {job.verificationType === "github_commit" ? "Branch" : "Ref"}: {job.targetBranch}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1228,12 +1331,18 @@ export default function JobDetailPage() {
               {job.clientRepo && (
                 <div>
                   <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">
-                    Target Repository
+                    {job.verificationType === "github_commit" ? "Target Repository" :
+                     job.verificationType === "ipfs_delivery" ? "IPFS Destination" :
+                     job.verificationType === "url_live" ? "Target URL" :
+                     "Deliverable Destination"}
                   </span>
+                  <p className="text-white/30 text-[10px] mb-1">Set by client when creating the job</p>
                   <div className="flex items-center gap-2">
                     <GitBranch className="w-3.5 h-3.5 text-white/40" />
                     <a
-                      href={`https://github.com/${job.clientRepo}`}
+                      href={job.verificationType === "github_commit"
+                        ? `https://github.com/${job.clientRepo}`
+                        : job.clientRepo.startsWith("http") ? job.clientRepo : `https://${job.clientRepo}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-white text-sm font-mono hover:text-orange-400 transition-colors"
@@ -1249,7 +1358,7 @@ export default function JobDetailPage() {
               {job.targetBranch && (
                 <div>
                   <span className="text-white/40 text-xs uppercase tracking-wider block mb-1.5">
-                    Target Branch
+                    {job.verificationType === "github_commit" ? "Target Branch" : "Version / Reference"}
                   </span>
                   <div className="flex items-center gap-2">
                     <GitCommit className="w-3.5 h-3.5 text-white/40" />
@@ -1566,11 +1675,22 @@ export default function JobDetailPage() {
             <div className="space-y-4">
               {/* Target Repo Info */}
               <div className="bg-white/[0.05] rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <GitBranch className="w-4 h-4 text-purple-400" />
-                  <p className="text-white/60 text-sm">Target Repository</p>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="w-4 h-4 text-purple-400" />
+                    <p className="text-white/60 text-sm">Target Repository</p>
+                  </div>
+                  <span className="text-white/30 text-[10px] uppercase tracking-wider">From job posting</span>
                 </div>
-                <p className="text-white font-mono text-sm">{job.clientRepo}</p>
+                <a
+                  href={`https://github.com/${job.clientRepo}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-white font-mono text-sm hover:text-purple-400 transition-colors"
+                >
+                  {job.clientRepo}
+                  <ExternalLink className="w-3 h-3 inline ml-1 opacity-50" />
+                </a>
                 {job.targetBranch && (
                   <p className="text-white/60 font-mono text-xs mt-1">Branch: {job.targetBranch}</p>
                 )}
@@ -1601,9 +1721,24 @@ export default function JobDetailPage() {
 
               {/* Commit SHA Input */}
               <div>
-                <label className="block text-white/60 text-sm mb-2 font-medium">
-                  Commit SHA
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-white/60 text-sm font-medium">
+                    Commit SHA
+                  </label>
+                  <button
+                    type="button"
+                    onClick={fetchRecentCommits}
+                    disabled={loadingCommits}
+                    className="text-purple-400 hover:text-purple-300 text-xs flex items-center gap-1 transition-colors"
+                  >
+                    {loadingCommits ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <GitCommit className="w-3 h-3" />
+                    )}
+                    {loadingCommits ? "Loading..." : "Fetch recent commits"}
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={commitSha}
@@ -1611,6 +1746,36 @@ export default function JobDetailPage() {
                   placeholder="e.g. a1b2c3d4e5f6..."
                   className="w-full px-4 py-3 bg-white/[0.05] border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-purple-500/30 focus:ring-1 focus:ring-purple-500/20 font-mono text-sm"
                 />
+
+                {/* Recent commits dropdown */}
+                {recentCommits.length > 0 && (
+                  <div className="mt-2 border border-white/10 rounded-lg overflow-hidden">
+                    <p className="text-white/30 text-[10px] uppercase tracking-wider px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.05]">
+                      Recent commits on {job.clientRepo}
+                    </p>
+                    {recentCommits.map((c) => (
+                      <button
+                        key={c.sha}
+                        type="button"
+                        onClick={() => {
+                          setCommitSha(c.sha);
+                          setRecentCommits([]);
+                        }}
+                        className={`w-full text-left px-3 py-2 hover:bg-purple-500/10 transition-colors border-b border-white/[0.03] last:border-0 ${
+                          commitSha === c.sha ? "bg-purple-500/10" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Hash className="w-3 h-3 text-white/30 flex-shrink-0" />
+                          <span className="text-white/80 font-mono text-xs">{c.sha.slice(0, 12)}...</span>
+                          <span className="text-white/30 text-xs ml-auto">{c.date}</span>
+                        </div>
+                        <p className="text-white/40 text-xs mt-0.5 pl-5 truncate">{c.message}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <p className="text-white/30 text-xs mt-1.5">
                   The commit SHA of the code you pushed to the target repository.
                   Run <code className="bg-white/10 px-1 rounded">git rev-parse HEAD</code> to get it.
@@ -1691,7 +1856,7 @@ export default function JobDetailPage() {
         <LinkGitHub
           isModal={true}
           onClose={() => setShowLinkGitHubModal(false)}
-          onLinked={(username) => {
+          onLinked={(username: string) => {
             setShowLinkGitHubModal(false);
             refetchGitHubLinked();
             // After linking, they can try accepting again
@@ -1703,12 +1868,14 @@ export default function JobDetailPage() {
       <FdcVisualizer
         isOpen={showFdcModal}
         onClose={() => {
+          // Don't allow closing while claim tx is in-flight
+          if (isClaimPending || isClaimConfirming) return;
           setShowFdcModal(false);
           setFdcProgress(null);
           setFdcResult(null);
           setProofHash(null);
           setVotingRound(null);
-          setTxStatus("idle");
+          if (txStatus !== "success") setTxStatus("idle");
         }}
         progress={fdcProgress}
         result={fdcResult}

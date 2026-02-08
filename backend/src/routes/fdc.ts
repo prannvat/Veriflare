@@ -19,6 +19,17 @@ const fdcService = new FDCService();
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * POST /api/fdc/set-public-url
+ * Set the public backend URL at runtime (e.g. after starting ngrok)
+ */
+router.post("/set-public-url", (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "Missing url" });
+  fdcService.setPublicBaseUrl(url.replace(/\/$/, "")); // strip trailing slash
+  res.json({ success: true, publicUrl: url });
+});
+
+/**
  * POST /api/fdc/prepare-commit
  * Step 1: Prepare attestation request via verifier server
  */

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 // Job categories supported by the platform
 export type JobCategory = 
@@ -114,7 +115,7 @@ interface AppState {
   resetFdc: () => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>()(persist((set, get) => ({
   // User state
   isGitHubLinked: false,
   gitHubUsername: null,
@@ -327,4 +328,49 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ fdcStep: step, fdcStepTitle: title, fdcStepDescription: description }),
   resetFdc: () =>
     set({ fdcStep: 0, fdcStepTitle: "", fdcStepDescription: "" }),
+}), {
+  name: "veriflare-store",
+  storage: {
+    getItem: (name) => {
+      const str = localStorage.getItem(name);
+      if (!str) return null;
+      const parsed = JSON.parse(str, (key, value) => {
+        if (typeof value === 'object' && value !== null && value.__type === 'Map') {
+          return new Map(value.entries.map(([k, v]: [string, any]) => [
+            k,
+            { ...v, paymentAmount: BigInt(v.paymentAmount || '0') },
+          ]));
+        }
+        if (typeof value === 'string' && value.startsWith('__bigint:')) {
+          return BigInt(value.slice(9));
+        }
+        return value;
+      });
+      return parsed;
+    },
+    setItem: (name, value) => {
+      const str = JSON.stringify(value, (key, val) => {
+        if (val instanceof Map) {
+          return {
+            __type: 'Map',
+            entries: Array.from(val.entries()).map(([k, v]) => [
+              k,
+              { ...v, paymentAmount: v.paymentAmount?.toString() || '0' },
+            ]),
+          };
+        }
+        if (typeof val === 'bigint') {
+          return `__bigint:${val.toString()}`;
+        }
+        return val;
+      });
+      localStorage.setItem(name, str);
+    },
+    removeItem: (name) => localStorage.removeItem(name),
+  },
+  partialize: (state) => ({
+    jobs: state.jobs,
+    isGitHubLinked: state.isGitHubLinked,
+    gitHubUsername: state.gitHubUsername,
+  } as any),
 }));

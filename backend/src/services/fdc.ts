@@ -1,4 +1,6 @@
 import { ethers } from "ethers";
+import crypto from "crypto";
+import { cacheGitHubData } from "../routes/github-cache";
 
 // ═══════════════════════════════════════════════════════════════
 //   Real Flare Data Connector (FDC) integration — Web2Json flow
@@ -92,6 +94,7 @@ export class FDCService {
   private verifierUrl: string;
   private verifierApiKey: string;
   private daLayerUrl: string;
+  private publicBaseUrl: string;
 
   constructor() {
     const rpcUrl = process.env.COSTON2_RPC_URL || "https://coston2-api.flare.network/ext/C/rpc";
@@ -113,6 +116,18 @@ export class FDCService {
     this.verifierApiKey = process.env.VERIFIER_API_KEY_TESTNET || "00000000-0000-0000-0000-000000000000";
     this.daLayerUrl = process.env.COSTON2_DA_LAYER_URL
       || "https://ctn2-data-availability.flare.network";
+
+    // Public base URL for the GitHub cache proxy.
+    // The FDC verifier will fetch from this URL instead of api.github.com
+    // (GitHub API is too slow / blocked from the verifier's servers).
+    // Set PUBLIC_BACKEND_URL to your ngrok/deployed URL.
+    this.publicBaseUrl = process.env.PUBLIC_BACKEND_URL || "";
+  }
+
+  /** Set the public base URL at runtime (e.g. after ngrok starts) */
+  setPublicBaseUrl(url: string) {
+    this.publicBaseUrl = url;
+    console.log(`[FDC] Public base URL set to: ${url}`);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -120,43 +135,78 @@ export class FDCService {
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Prepare a Web2Json attestation request for a GitHub commit
+   * Prepare a Web2Json attestation request for a GitHub commit.
+   *
+   * The FDC verifier cannot fetch api.github.com (1-sec timeout / IP blocked),
+   * so we pre-fetch the commit data, cache it in our backend, and give the
+   * verifier our public proxy URL instead.
    */
   async prepareCommitAttestation(repoFullName: string, commitSha: string): Promise<{
     abiEncodedRequest: string;
     attestationId: string;
   }> {
-    // IMPORTANT: Use the "commits" API (not "git/commits") because it returns
-    // top-level .author.login (GitHub username) which is what the contract checks.
-    // The git/commits endpoint only returns .author.name (display name), not login.
-    const url = `https://api.github.com/repos/${repoFullName}/commits/${commitSha}`;
+    if (!this.publicBaseUrl) {
+      throw new Error(
+        "PUBLIC_BACKEND_URL is not set. The FDC verifier cannot reach api.github.com directly. " +
+        "Start ngrok (ngrok http 3002) and set PUBLIC_BACKEND_URL in .env or via /api/fdc/set-public-url."
+      );
+    }
 
-    // JQ filter to extract the fields we care about from the GitHub API response.
-    // The commits API response has:
-    //   .sha            → commit SHA
-    //   .commit.tree.sha → tree hash
-    //   .author.login   → GitHub username (top-level, NOT .commit.author.name)
-    //   .commit.author.date → ISO 8601 timestamp
-    const postProcessJq = [
-      `{`,
-      `  repoFullName: "${repoFullName}",`,
-      `  commitSha: .sha,`,
-      `  treeHash: .commit.tree.sha,`,
-      `  authorLogin: .author.login,`,
-      `  commitTimestamp: (.commit.author.date | fromdateiso8601)`,
-      `}`,
-    ].join("");
+    // 1. Pre-fetch the commit from GitHub API
+    const githubUrl = `https://api.github.com/repos/${repoFullName}/commits/${commitSha}`;
+    console.log(`[FDC] Pre-fetching commit from GitHub: ${githubUrl}`);
 
-    // ABI signature matching GitHubCommitAttestation struct (JSON ABI format)
+    const ghResp = await fetch(githubUrl, {
+      headers: {
+        "User-Agent": "Veriflare-Backend",
+        "Accept": "application/json",
+        ...(process.env.GITHUB_TOKEN ? { "Authorization": `token ${process.env.GITHUB_TOKEN}` } : {}),
+      },
+    });
+
+    if (!ghResp.ok) {
+      const text = await ghResp.text();
+      if (ghResp.status === 404) {
+        throw new Error(
+          `Commit not found. The GitHub API returned 404 for repo "${repoFullName}" commit "${commitSha}". ` +
+          `Make sure (1) the repo exists at github.com/${repoFullName}, ` +
+          `(2) you pushed your code, and (3) the commit SHA is correct (run "git rev-parse HEAD").`
+        );
+      }
+      throw new Error(`GitHub API returned ${ghResp.status}: ${text.substring(0, 200)}`);
+    }
+
+    const commitData = await ghResp.json() as any;
+    console.log(`[FDC] Got commit data: sha=${commitData.sha}, author=${commitData.author?.login}`);
+
+    // 2. Cache ONLY the minimal fields the JQ filter needs.
+    //    The full GitHub commit response can be 100KB+ (diffs, patches, files)
+    //    which causes the FDC verifier to timeout. Keep it tiny.
+    const minimalData = {
+      sha: commitData.sha,
+      commit: { tree: { sha: commitData.commit?.tree?.sha } },
+      author: { login: commitData.author?.login },
+    };
+    console.log(`[FDC] Cached minimal data (${JSON.stringify(minimalData).length} bytes)`);
+
+    const cacheKey = crypto.randomBytes(16).toString("hex");
+    cacheGitHubData(cacheKey, minimalData);
+
+    // 3. Point the FDC verifier at our cached version
+    const proxyUrl = `${this.publicBaseUrl}/api/github-cache/${cacheKey}`;
+    console.log(`[FDC] Using proxy URL for verifier: ${proxyUrl}`);
+
+    // JQ filter: extract the 3 fields we need
+    const postProcessJq = `{commitSha: .sha, treeHash: .commit.tree.sha, authorLogin: .author.login}`;
+
+    // ABI signature matching GitHubCommitAttestation struct
     const abiSignature = buildAbiSignature([
-      { name: "repoFullName", type: "string" },
       { name: "commitSha", type: "string" },
       { name: "treeHash", type: "string" },
       { name: "authorLogin", type: "string" },
-      { name: "commitTimestamp", type: "uint256" },
     ]);
 
-    return this._prepareRequest(url, "GET", postProcessJq, abiSignature);
+    return this._prepareRequest(proxyUrl, "GET", postProcessJq, abiSignature);
   }
 
   /**
@@ -214,22 +264,28 @@ export class FDCService {
       headers["X-API-KEY"] = this.verifierApiKey;
     }
 
+    console.log(`[FDC] Sending to verifier: ${this.verifierUrl}/Web2Json/prepareRequest`);
+    console.log(`[FDC] Request payload:`, JSON.stringify(requestBody, null, 2));
+
     const resp = await fetch(`${this.verifierUrl}/Web2Json/prepareRequest`, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
     });
 
+    const rawText = await resp.text();
+    console.log(`[FDC] Verifier HTTP ${resp.status}, raw response: ${rawText.substring(0, 1000)}`);
+
     if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`Verifier prepareRequest failed (${resp.status}): ${text}`);
+      throw new Error(`Verifier prepareRequest failed (${resp.status}): ${rawText}`);
     }
 
-    const json = await resp.json() as any;
+    const json = JSON.parse(rawText);
+    console.log(`[FDC] Verifier response:`, JSON.stringify(json));
     const abiEncodedRequest: string = json.abiEncodedRequest;
 
     if (!abiEncodedRequest) {
-      throw new Error("Verifier returned no abiEncodedRequest");
+      throw new Error(`Verifier returned no abiEncodedRequest: ${JSON.stringify(json)}`);
     }
 
     const attestationId = this._generateId();

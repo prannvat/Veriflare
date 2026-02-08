@@ -24,12 +24,14 @@ export default function JobsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [mounted, setMounted] = useState(false);
   
   // Use store
   const { jobs, initDemoJobs } = useAppStore();
   
   // Initialize demo jobs on mount
   useEffect(() => {
+    setMounted(true);
     if (jobs.size === 0) {
       initDemoJobs();
     }
@@ -47,6 +49,21 @@ export default function JobsPage() {
       categoryFilter === "all" || job.category === categoryFilter;
     return matchesSearch && matchesStatus && matchesCategory;
   });
+
+  if (!mounted) {
+    return (
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-12 py-16">
+        <div className="animate-pulse space-y-6">
+          <div className="h-8 w-48 bg-white/10 rounded" />
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-48 bg-white/5 rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-12 py-16">

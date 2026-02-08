@@ -80,6 +80,11 @@ export const FDC_STEPS = [
     title: "Proof Ready",
     description: "Merkle proof verified! Ready to submit on-chain.",
   },
+  {
+    step: 6,
+    title: "Claim Payment",
+    description: "Submitting proof to smart contract to release funds...",
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════

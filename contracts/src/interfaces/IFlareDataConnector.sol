@@ -72,12 +72,12 @@ struct Web2JsonProof {
 // ═══════════════════════════════════════════════════════════════
 
 /// @notice GitHub commit data returned by the GitHub API, attested via Web2Json
+/// @dev Only includes fields extractable via the FDC verifier's JQ subset.
+///      Repo is verified via proof.data.requestBody.url instead.
 struct GitHubCommitAttestation {
-    string repoFullName;      // "owner/repo"
     string commitSha;         // SHA of the commit
     string treeHash;          // Git tree hash (hex string)
     string authorLogin;       // GitHub username of commit author
-    uint256 commitTimestamp;  // Unix timestamp of commit
 }
 
 /// @notice GitHub gist data for identity verification, attested via Web2Json

@@ -14,6 +14,7 @@ contract DeployScript is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address treasury = vm.envOr("TREASURY_ADDRESS", msg.sender);
+        address identitySigner = vm.envAddress("IDENTITY_SIGNER_ADDRESS");
         
         vm.startBroadcast(deployerPrivateKey);
 
@@ -37,7 +38,8 @@ contract DeployScript is Script {
         // Deploy main escrow contract
         FreelancerEscrow escrow = new FreelancerEscrow(
             registryAddr,
-            treasury
+            treasury,
+            identitySigner
         );
         console.log("FreelancerEscrow deployed at:", address(escrow));
 
@@ -64,12 +66,14 @@ contract DeployMainnet is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address treasury = vm.envAddress("TREASURY_ADDRESS");
+        address identitySigner = vm.envAddress("IDENTITY_SIGNER_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);
 
         FreelancerEscrow escrow = new FreelancerEscrow(
             FLARE_CONTRACT_REGISTRY,
-            treasury
+            treasury,
+            identitySigner
         );
         console.log("FreelancerEscrow deployed at:", address(escrow));
 

@@ -285,6 +285,23 @@ export const FREELANCER_ESCROW_ABI = [
   },
   {
     type: "function",
+    name: "linkGitHubDirect",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "gitHubUsername", type: "string" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "identityNonces",
+    stateMutability: "view",
+    inputs: [{ name: "wallet", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "openDispute",
     stateMutability: "nonpayable",
     inputs: [
@@ -316,7 +333,7 @@ export type JobStatus = keyof typeof JOB_STATUS;
 export const CONTRACT_ADDRESSES = {
   // Coston2 Testnet (Chain ID: 114)
   coston2: {
-    escrow: "0x3DF72131555649Cdb40c743605c622A50409e0fb" as `0x${string}`,
+    escrow: "0xebd58418c784a240C7dC45cF8a8bD41dE5d35F9F" as `0x${string}`,
     contractRegistry: "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019" as `0x${string}`,
   },
   // Flare Mainnet (Chain ID: 14) - Not yet deployed
