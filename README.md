@@ -96,6 +96,12 @@ BUILT ON FLARE
    - Commit author matches freelancer's linked GitHub
    - Git tree hash matches the `sourceCodeHash` from accepted build
    - Commit was made before delivery deadline
+  
+##SMART CONTRACTS
+Current (Active) Contract
+Contract	Address
+FreelancerEscrow (6th deploy)	0xebd58418c784a240C7dC45cF8a8bD41dE5d35F9F
+🔗 Explorer: https://coston2-explorer.flare.network/address/0xebd58418c784a240C7dC45cF8a8bD41dE5d35F9F
 
 ## 🏆 Hackathon Tracks
 
