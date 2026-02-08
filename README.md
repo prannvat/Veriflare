@@ -87,7 +87,7 @@ cd frontend && pnpm dev
 # Start backend
 cd backend && pnpm dev
 ```
-
+BUILT ON FLARE
 ## 🔐 How FDC Verification Works
 
 1. **GitHub Identity Linking**: User creates a gist with wallet signature, FDC verifies
